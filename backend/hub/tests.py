@@ -3,6 +3,7 @@ import json
 import zipfile
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from rest_framework.test import APITestCase
 
 from . import document_exchange
@@ -1659,3 +1660,13 @@ class AssessmentSupportGroupTests(APITestCase):
         SupportGroup.objects.all().delete()
         empty = self.client.post(f"/api/assessments/{self.a1.id}/create-support-group/", {"threshold": 30}, format="json")
         self.assertEqual(empty.status_code, 400)
+
+
+class SeedIfEmptyTests(APITestCase):
+    def test_loads_snapshot_once_into_empty_database(self):
+        self.assertEqual(Course.objects.count(), 0)
+        call_command("seed_if_empty", verbosity=0)
+        self.assertEqual(Course.objects.count(), 11)
+        self.assertEqual(LessonPlan.objects.count(), 9)
+        call_command("seed_if_empty", verbosity=0)
+        self.assertEqual(Course.objects.count(), 11)
