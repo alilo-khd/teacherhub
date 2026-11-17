@@ -96,9 +96,17 @@ TEMPLATES = [{"BACKEND": "django.template.backends.django.DjangoTemplates",
 if os.environ.get("DATABASE_URL"):
     import dj_database_url
     DATABASES = {"default": dj_database_url.config(conn_max_age=60, conn_health_checks=True)}
-else:
+elif DEBUG:
     DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3",
                              "NAME": BASE_DIR / "db.sqlite3"}}
+else:
+    # Production must never silently fall back to a disposable local file:
+    # on hosts like Render that file is wiped on every rebuild.
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "DATABASE_URL is not set. In production (DJANGO_DEBUG=0) TeacherHub "
+        "requires a real database — set DATABASE_URL to your Neon connection "
+        "string in the host's environment settings.")
 
 AUTH_PASSWORD_VALIDATORS = []
 LANGUAGE_CODE = "ar"

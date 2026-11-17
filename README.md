@@ -522,3 +522,11 @@ The assessment loop now closes into intervention: weak results become a working 
 - **Assessment Centre**: the results modal gains a «مجموعة دعم للمتعثرين» panel — it saves the current grid first (so the group always matches what the teacher sees), then offers threshold (40/50/60٪), support band (دعم ومواكبة / دعم مكثف / تعزيز وتثبيت), an include-absent toggle, and live candidate chips with percents. After creation it deep-links into the Support & Remediation centre, where the group carries a «من تقويم: …» source badge and can be scheduled and given worksheets as usual. Assessment cards show a «لها مجموعة دعم» badge. Full Arabic/English/French UI.
 
 Covered by `AssessmentSupportGroupTests` (threshold selection, absent inclusion, idempotency, empty-candidate 400, serializer link); suite now **87 tests**. Verified in a real browser (candidates → create → remedial group with source badge → card badge, zero page errors); the throwaway verification class was deleted afterwards (real data untouched: classes 3, students 54, marks 162, assessments 0, support groups 0).
+
+## Deployment (Render + Neon)
+
+The app runs as **one Docker web service** (Django + gunicorn serving the built React app and the `/api`) with **Neon Postgres** as the database:
+
+- `backend/config/settings.py` reads `DATABASE_URL`, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS` from the environment; locally, a repo-root `.env.local` (written by `neon init`, never committed) supplies them. Without `DATABASE_URL` it falls back to the local SQLite file.
+- `Dockerfile` (repo root) builds the frontend (`--base=/static/`), installs WeasyPrint's system libraries and Arabic fonts, and starts with `migrate && collectstatic && gunicorn`. `render.yaml` is a ready Render blueprint (free plan); set `DATABASE_URL` in the Render dashboard to the Neon **direct** (unpooled) connection string.
+- Local data was migrated once with `dumpdata` (from SQLite) → `loaddata` (into Neon): 429 objects (3 classes, 54 students, 162 marks, 9 documents, 60 bank questions, 74 themes, 3 journals). The full test suite (**87 tests**) passes against both SQLite and Neon Postgres.

@@ -1,7 +1,9 @@
 # Render blueprint — one free web service (Docker) serving the whole app.
 # Database: Neon Postgres. After the first deploy, open the service in the
-# Render dashboard and set DATABASE_URL to your Neon *direct* connection
-# string (Neon Console → your project → Connection Details), then redeploy.
+# Render dashboard → Environment and set DATABASE_URL to your Neon *direct*
+# connection string (Neon Console → project → Connect), then Save (it
+# redeploys). Until then the app refuses to start — by design, so it can
+# never silently run on a disposable database that a rebuild would wipe.
 services:
   - type: web
     name: teacherhub
