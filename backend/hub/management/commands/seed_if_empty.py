@@ -15,6 +15,7 @@ from django.core.management import call_command
 from django.core.management.base import BaseCommand
 
 from hub.models import Course
+from hub.views import local_user
 
 
 class Command(BaseCommand):
@@ -24,6 +25,11 @@ class Command(BaseCommand):
         if Course.objects.exists():
             self.stdout.write("seed_if_empty: database already has lessons — snapshot skipped.")
             return
+        # The snapshot references the owner by natural key ("teacher") instead
+        # of embedding the user row: make sure that user exists first (the app
+        # auto-creates it on first request, so it may already be there — that
+        # used to make loaddata fail with a duplicate-username error).
+        local_user()
         call_command("loaddata", "teacherhub_snapshot", verbosity=0)
         self.stdout.write(self.style.SUCCESS(
             f"seed_if_empty: snapshot loaded ({Course.objects.count()} lessons)."))
