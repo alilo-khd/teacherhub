@@ -7,7 +7,7 @@ import { useLang } from "../i18n";
 import Icon from "../components/Icon";
 
 const riskBadge = (level) => level === "high" ? "text-bg-danger" : level === "medium" ? "text-bg-warning" : "text-bg-success";
-const riskLabel = (level) => level === "high" ? "عالية" : level === "medium" ? "متوسطة" : "منخفضة";
+const riskLabel = (level) => level === "high" ? "مخاطرة عالية" : level === "medium" ? "مخاطرة متوسطة" : "مخاطرة منخفضة";
 const toneBadge = (tone) => tone === "danger" ? "text-bg-danger" : tone === "warning" ? "text-bg-warning" : tone === "success" ? "text-bg-success" : "text-bg-info";
 const fmt = (value, suffix = "") => value == null ? "—" : `${value}${suffix}`;
 const ATTENDANCE_LABELS = { present: "حاضر", absent: "غائب", late: "متأخر", excused: "غياب مبرر", left_early: "غادر مبكرًا" };
@@ -76,7 +76,7 @@ export default function StudentDossierPage() {
             <button className="btn btn-light btn-sm rounded-pill mb-3" onClick={() => navigate("/students")}>← {t("عودة إلى التلاميذ والنقاط")}</button>
             <div className="d-flex flex-wrap align-items-center gap-2">
               <h3 className="fw-bold mb-0">{student.full_name}</h3>
-              <span className={`badge rounded-pill ${riskBadge(risk.risk_level)}`}>{t("مخاطرة")} {te(riskLabel(risk.risk_level))} • {risk.risk_score}/100</span>
+              <span className={`badge rounded-pill ${riskBadge(risk.risk_level)}`}>{te(riskLabel(risk.risk_level))} • {risk.risk_score}/100</span>
             </div>
             <p className="text-secondary mb-0 mt-2">{dossier.class.name} • {dossier.class.level}{student.birth_date ? ` • ${student.birth_date}` : ""}{student.notes ? ` • ${student.notes}` : ""}</p>
           </div>

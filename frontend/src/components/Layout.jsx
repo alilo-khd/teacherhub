@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -228,7 +228,14 @@ export default function Layout() {
           </div>
         </header>
         <div className="content-wrap">
-          <Outlet />
+          <Suspense fallback={
+            <div className="d-flex align-items-center justify-content-center gap-2 py-5 text-secondary" role="status" aria-live="polite">
+              <span className="spinner-border spinner-border-sm text-primary" aria-hidden="true" />
+              <span>{t("جارٍ التحميل…")}</span>
+            </div>
+          }>
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>

@@ -67,7 +67,7 @@ function TaskForm({ initial, classes, students, onSubmit, onClose }) {
         <div className="row g-3">
           <div className="col-12"><label className="form-label small fw-semibold">{t("عنوان المهمة")} *</label><input className="form-control" required value={form.title} onChange={(e) => set("title", e.target.value)} placeholder={t("مثال: الاتصال بولي تلميذ كثير الغياب")} /></div>
           <div className="col-6 col-md-3"><label className="form-label small fw-semibold">{t("الصنف")}</label><select className="form-select" value={form.category} onChange={(e) => set("category", e.target.value)}>{CATEGORIES.map(([key, label]) => <option key={key} value={key}>{te(label)}</option>)}</select></div>
-          <div className="col-6 col-md-3"><label className="form-label small fw-semibold">{t("الأولوية")}</label><select className="form-select" value={form.priority} onChange={(e) => set("priority", e.target.value)}>{PRIORITIES.map(([key, label]) => <option key={key} value={key}>{te(label)}</option>)}</select></div>
+          <div className="col-6 col-md-3"><label className="form-label small fw-semibold">{t("الأولوية")}</label><select className="form-select" value={form.priority} onChange={(e) => set("priority", e.target.value)}>{PRIORITIES.map(([key, label]) => <option key={key} value={key}>{t(label)}</option>)}</select></div>
           <div className="col-6 col-md-3"><label className="form-label small fw-semibold">{t("الحالة")}</label><select className="form-select" value={form.status} onChange={(e) => set("status", e.target.value)}>{STATUSES.map(([key, label]) => <option key={key} value={key}>{te(label)}</option>)}</select></div>
           <div className="col-6 col-md-3"><label className="form-label small fw-semibold">{t("تاريخ الاستحقاق")}</label><input type="date" className="form-control" value={form.due_date || ""} onChange={(e) => set("due_date", e.target.value)} /></div>
           <div className="col-12 col-md-6"><label className="form-label small fw-semibold">{t("الفوج المرتبط")}</label><select className="form-select" value={form.school_class} onChange={(e) => { set("school_class", e.target.value); set("student", ""); }}><option value="">{t("بدون فوج محدد")}</option>{classes.map((cls) => <option key={cls.id} value={cls.id}>{cls.name}</option>)}</select></div>
@@ -203,7 +203,7 @@ export default function ActionsPage() {
               <input className="form-control action-search" placeholder={t("بحث في المهام والتلاميذ…")} value={filters.q} onChange={(e) => setFilters((x) => ({ ...x, q: e.target.value }))} />
               <select className="form-select w-auto" value={filters.status} onChange={(e) => setFilters((x) => ({ ...x, status: e.target.value }))}><option value="">{t("كل الحالات")}</option>{STATUSES.map(([key, label]) => <option key={key} value={key}>{te(label)}</option>)}</select>
               <select className="form-select w-auto" value={filters.category} onChange={(e) => setFilters((x) => ({ ...x, category: e.target.value }))}><option value="">{t("كل الأصناف")}</option>{CATEGORIES.map(([key, label]) => <option key={key} value={key}>{te(label)}</option>)}</select>
-              <select className="form-select w-auto" value={filters.priority} onChange={(e) => setFilters((x) => ({ ...x, priority: e.target.value }))}><option value="">{t("كل الأولويات")}</option>{PRIORITIES.map(([key, label]) => <option key={key} value={key}>{te(label)}</option>)}</select>
+              <select className="form-select w-auto" value={filters.priority} onChange={(e) => setFilters((x) => ({ ...x, priority: e.target.value }))}><option value="">{t("كل الأولويات")}</option>{PRIORITIES.map(([key, label]) => <option key={key} value={key}>{t(label)}</option>)}</select>
               <select className="form-select w-auto" value={filters.due} onChange={(e) => setFilters((x) => ({ ...x, due: e.target.value }))}><option value="">{t("كل الآجال")}</option><option value="overdue">{t("متأخرة")}</option><option value="today">{t("اليوم")}</option><option value="week">{t("هذا الأسبوع")}</option><option value="none">{t("بدون أجل")}</option></select>
               <button className="btn btn-light rounded-pill" onClick={() => setFilters({ q: "", status: "", category: "", priority: "", due: "" })}>{t("إعادة تعيين")}</button>
             </div>
@@ -221,7 +221,7 @@ export default function ActionsPage() {
                         <div className="d-flex flex-wrap align-items-center gap-2">
                           <h6 className="fw-bold mb-0">{task.title}</h6>
                           <span className="badge text-bg-light border">{te(labelOf(CATEGORIES, task.category))}</span>
-                          <span className={`badge ${priorityBadge(task.priority)}`}>{te(labelOf(PRIORITIES, task.priority))}</span>
+                          <span className={`badge ${priorityBadge(task.priority)}`}>{t(labelOf(PRIORITIES, task.priority))}</span>
                           <span className={`badge ${statusBadge(task.status)}`}>{te(labelOf(STATUSES, task.status))}</span>
                           {dueInfo(task, t)}
                           {task.origin === "auto" && <span className="badge text-bg-info">{t("اقتراح ذكي")}</span>}
@@ -254,7 +254,7 @@ export default function ActionsPage() {
                   <div className="card-body">
                     <div className="d-flex flex-wrap gap-2 align-items-center mb-2">
                       <span className="badge text-bg-light border">{te(suggestion.category_label)}</span>
-                      <span className={`badge ${priorityBadge(suggestion.priority)}`}>{te(suggestion.priority_label)}</span>
+                      <span className={`badge ${priorityBadge(suggestion.priority)}`}>{t(suggestion.priority_label)}</span>
                       {suggestion.due_date && <span className="badge text-bg-warning">{suggestion.due_date}</span>}
                       {suggestion.already_added && <span className="badge text-bg-success">{t("أُضيف سابقًا")}</span>}
                     </div>

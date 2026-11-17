@@ -156,9 +156,8 @@ export default function CoursesPage() {
           })}
         </div>
       )}
-
-      )}
-      {confirm && <ConfirmModal title={t("حذف الدرس")} body={`سيُحذف درس «${confirm.title}» {t("من المقرر")} (لن تُحذف الحصص المسجلة، بل ستُفصل عنه).`}
+      {confirm && <ConfirmModal title={t("حذف الدرس")}
+        body={`سيُحذف درس «${confirm.title}» من المقرر (لن تُحذف الحصص المسجلة، بل ستُفصل عنه).`}
         onConfirm={() => remove(confirm.id)} onClose={() => setConfirm(null)} />}
     </>
   );
