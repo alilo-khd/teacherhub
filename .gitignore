@@ -1,0 +1,20 @@
+# Secrets & local state — never commit
+.env
+.env.local
+.neon
+*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node / build output (rebuilt by Docker on deploy)
+node_modules/
+frontend/dist/
+backend/staticfiles/
+
+# Editor / OS
+.DS_Store
+.claude/
+.env.local

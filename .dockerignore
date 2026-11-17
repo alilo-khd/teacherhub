@@ -1,0 +1,9 @@
+.git
+.env
+.env.local
+.neon
+*.sqlite3
+**/node_modules
+frontend/dist
+backend/staticfiles
+**/__pycache__
