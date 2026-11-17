@@ -1670,3 +1670,28 @@ class SeedIfEmptyTests(APITestCase):
         self.assertEqual(LessonPlan.objects.count(), 9)
         call_command("seed_if_empty", verbosity=0)
         self.assertEqual(Course.objects.count(), 11)
+
+    def test_preserves_preexisting_themes_and_remaps_fixture_foreign_keys(self):
+        # Simulate theme initialization using both an overlapping slug under a
+        # different pk and a pk the snapshot wants for a different theme.
+        Theme.objects.create(pk=1, slug="reserved-id-one", name_ar="محفوظ ١")
+        Theme.objects.create(pk=2, slug="reserved-id-two", name_ar="محفوظ ٢")
+        Theme.objects.create(pk=900, slug="gentleman-navy", name_ar="لا تغيّرني")
+
+        call_command("seed_if_empty", verbosity=0)
+
+        self.assertEqual(Course.objects.count(), 11)
+        self.assertEqual(LessonPlan.objects.count(), 9)
+        self.assertEqual(Theme.objects.get(slug="gentleman-navy").pk, 900)
+        self.assertEqual(Theme.objects.get(slug="gentleman-navy").name_ar, "لا تغيّرني")
+        self.assertTrue(Journal.objects.filter(theme_id=900).exists())
+        remapped = Theme.objects.get(slug="monochrome")
+        self.assertGreater(remapped.pk, 900)
+        self.assertTrue(Journal.objects.filter(theme=remapped).exists())
+        self.assertEqual(Theme.objects.get(pk=1).slug, "reserved-id-one")
+
+    def test_any_existing_non_theme_data_prevents_snapshot_merge(self):
+        Course.objects.create(owner=local_user(), title="existing live lesson")
+        call_command("seed_if_empty", verbosity=0)
+        self.assertEqual(Course.objects.count(), 1)
+        self.assertEqual(LessonPlan.objects.count(), 0)
