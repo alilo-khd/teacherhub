@@ -1,11 +1,42 @@
-// Tiny API client (local single-user mode — no auth headers needed).
+// Same-origin API client: Django sessions carry identity and this helper adds
+// the CSRF header to every state-changing request.
 import { tr } from "./i18n";
-export async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+
+function cookieValue(name) {
+  if (typeof document === "undefined") return "";
+  const prefix = `${name}=`;
+  const item = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(prefix));
+  return item ? decodeURIComponent(item.slice(prefix.length)) : "";
+}
+
+async function csrfToken() {
+  let token = cookieValue("csrftoken");
+  if (token) return token;
+  const response = await fetch("/api/auth/csrf/", { credentials: "same-origin" });
+  if (!response.ok) throw new Error(tr("تعذّر تهيئة جلسة آمنة."));
+  token = cookieValue("csrftoken");
+  if (!token) throw new Error(tr("تعذّر تهيئة جلسة آمنة."));
+  return token;
+}
+
+async function request(path, { method = "GET", body, headers = {} } = {}) {
+  const verb = method.toUpperCase();
+  const requestHeaders = { ...headers };
+  const isMultipart = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isMultipart) requestHeaders["Content-Type"] = "application/json";
+  if (!["GET", "HEAD", "OPTIONS", "TRACE"].includes(verb)) {
+    requestHeaders["X-CSRFToken"] = await csrfToken();
+  }
+  return fetch(`/api${path}`, {
+    method: verb,
+    credentials: "same-origin",
+    headers: requestHeaders,
+    body: body === undefined ? undefined : (isMultipart ? body : JSON.stringify(body)),
   });
+}
+
+export async function api(path, options = {}) {
+  const res = await request(path, options);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || tr("حدث خطأ غير متوقع."));
   return data;
@@ -20,7 +51,7 @@ export async function uploadFile(path, file, fields = {}) {
   Object.entries(fields).forEach(([key, value]) => {
     if (value !== undefined && value !== null) form.append(key, value);
   });
-  const res = await fetch(`/api${path}`, { method: "POST", body: form });
+  const res = await request(path, { method: "POST", body: form });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || tr("حدث خطأ غير متوقع."));
   return data;
@@ -28,7 +59,7 @@ export async function uploadFile(path, file, fields = {}) {
 
 /** Download any export endpoint (PDF, DOCX…) as a file. */
 export async function downloadFile(path, filename = "document.pdf") {
-  const res = await fetch(`/api${path}`);
+  const res = await request(path);
   if (!res.ok) throw new Error(tr("تعذّر توليد الملف."));
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -43,11 +74,7 @@ export async function downloadFile(path, filename = "document.pdf") {
 
 /** POST JSON to an endpoint and download the binary response (ZIP archives…). */
 export async function downloadPost(path, body, filename = "download.zip") {
-  const res = await fetch(`/api${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-  });
+  const res = await request(path, { method: "POST", body: body || {} });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.detail || tr("تعذّر توليد الملف."));
@@ -68,7 +95,10 @@ export async function downloadPdf(path, filename = "document.pdf") {
 }
 
 export const profileApi = {
-  me: () => api("/auth/me/"),
+  me: () => api("/auth/me/").then((result) => result.user),
+  login: (username, password) =>
+    api("/auth/login/", { method: "POST", body: { username, password } }),
+  logout: () => api("/auth/logout/", { method: "POST", body: {} }),
 };
 
 export const themeApi = {

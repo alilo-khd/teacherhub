@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { useLang } from "../i18n";
 
 export function ModalShell({ title, children, onClose, wide }) {
   const { t, te } = useLang();
+  const titleId = useId();
   useEffect(() => {
     const fn = (e) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", fn);
@@ -11,11 +12,11 @@ export function ModalShell({ title, children, onClose, wide }) {
   return (
     <>
       <div className="modal-backdrop fade show" onClick={onClose} />
-      <div className="modal fade show d-block" tabIndex="-1" role="dialog" aria-modal="true">
+      <div className="modal fade show d-block" tabIndex="-1" role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <div className={`modal-dialog modal-dialog-centered modal-dialog-scrollable ${wide ? "modal-lg" : ""}`}>
           <div className="modal-content border-0 shadow-lg rounded-4">
             <div className="modal-header border-0 pb-0">
-              <h5 className="modal-title fw-bold">{title}</h5>
+              <h5 id={titleId} className="modal-title fw-bold">{title}</h5>
               <button type="button" className="btn-close" onClick={onClose} aria-label={t("إغلاق")} />
             </div>
             <div className="modal-body">{children}</div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, downloadPdf, listOf } from "../api";
+import { documentPrintApi } from "../api/v2";
 import { Spinner } from "../components/States";
 import { useToast } from "../components/Toast";
 import { useLang } from "../i18n";
@@ -73,6 +74,44 @@ export default function PrintCenterPage() {
       navigate(`/editor/${doc.id}`);
     } catch (e) { toast(e.message, "danger"); setBusy(""); }
   };
+
+  // ---- Document template printing ----
+  const [tplBusy, setTplBusy] = useState("");
+  const [tplClass, setTplClass] = useState("");
+  const [tplTerm, setTplTerm] = useState("1");
+  const [tplGenerator, setTplGenerator] = useState("report-cards");
+
+  const TPL_CONFIG = {
+    "report-cards": { label: t("كشوف نقاط جماعية لفوج"), icon: "chart", kind: "report-card" },
+    "honor-certificates": { label: t("شهادات المتفوقين من النقاط"), icon: "sparkle", kind: "certificate" },
+    "attendance-sheet": { label: t("سجل حضور وغياب لفوج"), icon: "calendar", kind: "attendance-sheet" },
+    "tracker-sheet": { label: t("سجل متابعة الواجبات والسلوك"), icon: "clipboard", kind: "tracker-sheet" },
+    "student-id-cards": { label: t("بطاقات هوية تلاميذ فوج"), icon: "id", kind: "student-id-cards" },
+    "seating-plan": { label: t("مخطط جلوس من قائمة فوج"), icon: "grid", kind: "seating" },
+  };
+
+  const printTemplate = async () => {
+    if (!tplClass) { toast(t("اختر فوجاً أولاً"), "danger"); return; }
+    setTplBusy(tplGenerator);
+    try {
+      const body = {
+        generator: tplGenerator,
+        class_id: tplClass,
+        term: tplTerm,
+      };
+      if (tplGenerator === "honor-certificates") {
+        body.mode = "threshold";
+        body.min_average = 14;
+      }
+      const doc = await documentPrintApi.generate(body);
+      const pdfUrl = documentPrintApi.exportPdf(doc.id);
+      await downloadPdf(pdfUrl, `${tplConfigLabel(tplGenerator)}.pdf`);
+      toast("تم تنزيل مستند القالب — جاهز للطباعة");
+    } catch (e) { toast(e.message, "danger"); }
+    setTplBusy("");
+  };
+
+  const tplConfigLabel = (g) => TPL_CONFIG[g]?.label || g;
 
   const selectCls = "form-select form-select-sm";
   const cards = [
@@ -257,6 +296,44 @@ export default function PrintCenterPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Document template printing gallery */}
+      <div className="card border-0 shadow-sm mb-4">
+        <div className="card-body">
+          <div className="fw-bold mb-3"><Icon name="file-text" size={18} /> {t("طباعة من القوالب الجاهزة")}</div>
+          <p className="text-secondary small mb-3">{t("اختر قالباً، فوجاً، وثمثة ثلاثية ثم حمّل ملف PDF الجاهز للطباعة.")}</p>
+          <div className="row g-3">
+            <div className="col-12 col-md-3">
+              <label className="form-label small fw-semibold">{t("القالب")}</label>
+              <select className="form-select form-select-sm" value={tplGenerator} onChange={(e) => setTplGenerator(e.target.value)}>
+                {Object.entries(TPL_CONFIG).map(([key, cfg]) => (
+                  <option key={key} value={key}>{cfg.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-12 col-md-3">
+              <label className="form-label small fw-semibold">{t("الفوج")}</label>
+              <select className="form-select form-select-sm" value={tplClass} onChange={(e) => setTplClass(e.target.value)}>
+                <option value="">{t("اختر فوجاً…")}</option>
+                {data.classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="col-12 col-md-3">
+              <label className="form-label small fw-semibold">{t("الثلاثي")}</label>
+              <select className="form-select form-select-sm" value={tplTerm} onChange={(e) => setTplTerm(e.target.value)}>
+                <option value="1">{t("الثلاثي الأول")}</option>
+                <option value="2">{t("الثلاثي الثاني")}</option>
+                <option value="3">{t("الثلاثي الثالث")}</option>
+              </select>
+            </div>
+            <div className="col-12 col-md-3 d-flex align-items-end">
+              <button className="btn btn-primary rounded-pill w-100" disabled={tplBusy === tplGenerator || !tplClass} onClick={printTemplate}>
+                {tplBusy === tplGenerator ? <span className="spinner-border spinner-border-sm" /> : t("تحميل PDF")}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </>
   );

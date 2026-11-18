@@ -1,18 +1,174 @@
 import io
 import json
+import secrets
 import zipfile
 
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from rest_framework.test import APITestCase
+from django.test import override_settings
+from rest_framework.test import APIClient, APITestCase
 
 from . import document_exchange
 from .models import Assessment, AssessmentResult, Assignment, AssignmentSubmission, AttendanceRecord, Course, CustomDocument, Holiday, Institution, Journal, LessonPlan, Mark, Meeting, ParentCommunication, QuestionBankItem, SchoolClass, Seminar, Session, TimetableSlot, Student, StudentFollowUpRecord, SupportGroup, SupportPlan, TeacherProfile, TeacherTask, Theme
+from .serializers import TimetableSlotSerializer
 from .views import local_user
 
 
-class DocumentExchangeTests(APITestCase):
+class TeacherAPITestCase(APITestCase):
+    """Existing workflow tests run as the one provisioned teacher."""
+
     def setUp(self):
+        super().setUp()
+        User = get_user_model()
+        self.teacher, created = User.objects.get_or_create(
+            username=settings.TEACHER_USERNAME,
+            defaults={"first_name": "Test", "last_name": "Teacher"},
+        )
+        if created:
+            self.teacher.set_unusable_password()
+            self.teacher.save(update_fields=["password"])
+        self.client.force_authenticate(user=self.teacher)
+
+
+class PrivateTeacherAuthTests(APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.User = get_user_model()
+        self.password = secrets.token_urlsafe(24)
+        self.teacher = self.User.objects.create_user(
+            username=settings.TEACHER_USERNAME,
+            password=self.password,
+            first_name="Test",
+            last_name="Teacher",
+        )
+
+    def test_private_api_and_me_reject_anonymous_without_creating_an_account(self):
+        self.teacher.delete()
+        before = self.User.objects.count()
+        anonymous = APIClient()
+        self.assertEqual(anonymous.get("/api/dashboard/").status_code, 403)
+        me = anonymous.get("/api/auth/me/")
+        self.assertEqual(me.status_code, 200)
+        self.assertIsNone(me.data["user"])
+        self.assertEqual(self.User.objects.count(), before)
+        self.assertFalse(self.User.objects.filter(username=settings.TEACHER_USERNAME).exists())
+
+    def test_login_logout_use_a_csrf_protected_server_session(self):
+        client = APIClient(enforce_csrf_checks=True)
+        csrf_response = client.get("/api/auth/csrf/")
+        self.assertEqual(csrf_response.status_code, 200)
+        self.assertIn("csrftoken", client.cookies)
+
+        credentials = {"username": self.teacher.username, "password": self.password}
+        rejected = client.post("/api/auth/login/", credentials, format="json")
+        self.assertEqual(rejected.status_code, 403)
+
+        token = client.cookies["csrftoken"].value
+        logged_in = client.post(
+            "/api/auth/login/", credentials, format="json", HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(logged_in.status_code, 200, logged_in.content)
+        self.assertIn("sessionid", client.cookies)
+        self.assertEqual(client.get("/api/auth/me/").data["user"]["username"], self.teacher.username)
+
+        token = client.cookies["csrftoken"].value
+        logged_out = client.post(
+            "/api/auth/logout/", {}, format="json", HTTP_X_CSRFTOKEN=token)
+        self.assertEqual(logged_out.status_code, 200, logged_out.content)
+        self.assertIsNone(client.get("/api/auth/me/").data["user"])
+
+    def test_other_accounts_cannot_sign_in_or_access_the_workspace(self):
+        other = self.User.objects.create_user(username="other", password=self.password)
+        client = APIClient(enforce_csrf_checks=True)
+        client.get("/api/auth/csrf/")
+        response = client.post(
+            "/api/auth/login/",
+            {"username": other.username, "password": self.password},
+            format="json",
+            HTTP_X_CSRFTOKEN=client.cookies["csrftoken"].value,
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(client.get("/api/classes/").status_code, 403)
+
+    def test_public_registration_and_demo_login_are_not_exposed(self):
+        self.assertEqual(self.client.post("/api/auth/register/", {}, format="json").status_code, 404)
+        self.assertEqual(self.client.post("/api/auth/demo-login/", {}, format="json").status_code, 404)
+
+    def test_private_provisioning_command_sets_a_strong_password_without_displaying_it(self):
+        from unittest.mock import patch
+        from django.core.management import call_command
+        from io import StringIO
+
+        password = secrets.token_urlsafe(30)
+        output = StringIO()
+        with patch(
+            "hub.management.commands.provision_teacher.getpass",
+            side_effect=[password, password],
+        ):
+            call_command("provision_teacher", stdout=output)
+        self.teacher.refresh_from_db()
+        self.assertTrue(self.teacher.check_password(password))
+        self.assertFalse(self.teacher.is_staff)
+        self.assertFalse(self.teacher.is_superuser)
+        self.assertNotIn(password, output.getvalue())
+
+
+@override_settings(CACHES={
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "teacherhub_login_cache_test",
+    }
+})
+class SharedDatabaseLoginThrottleTests(APITestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        call_command("createcachetable", "teacherhub_login_cache_test", verbosity=0)
+
+    def setUp(self):
+        super().setUp()
+        from django.core.cache import cache
+        cache.clear()
+
+    def _client_with_csrf(self):
+        client = APIClient(enforce_csrf_checks=True)
+        response = client.get("/api/auth/csrf/")
+        self.assertEqual(response.status_code, 200)
+        return client, client.cookies["csrftoken"].value
+
+    def _failed_logins(self, client, token, count):
+        statuses = []
+        for _ in range(count):
+            response = client.post(
+                "/api/auth/login/",
+                {"username": settings.TEACHER_USERNAME, "password": ""},
+                format="json",
+                HTTP_X_CSRFTOKEN=token,
+            )
+            statuses.append(response.status_code)
+        return statuses
+
+    def test_throttle_cache_key_does_not_store_the_raw_client_ip(self):
+        from django.test import RequestFactory
+        from .throttling import PrivateTeacherLoginThrottle
+
+        request = RequestFactory().post("/", REMOTE_ADDR="192.0.2.42")
+        ident = PrivateTeacherLoginThrottle().get_ident(request)
+        self.assertEqual(len(ident), 64)
+        self.assertNotIn("192.0.2.42", ident)
+
+    def test_shared_database_throttle_counts_across_client_instances(self):
+        first, first_token = self._client_with_csrf()
+        second, second_token = self._client_with_csrf()
+        self.assertEqual(self._failed_logins(first, first_token, 6), [401] * 6)
+        self.assertEqual(self._failed_logins(second, second_token, 5), [401] * 4 + [429])
+
+
+class DocumentExchangeTests(TeacherAPITestCase):
+    def setUp(self):
+        super().setUp()
         self.theme = Theme.objects.create(slug="gentleman-navy", name_ar="البدلة الكحلية")
 
     def payload(self, title="اختبار مستورد"):
@@ -122,8 +278,9 @@ class DocumentExchangeTests(APITestCase):
             self.assertTrue(all(name.endswith(".teacherhub.json") for name in archive.namelist()))
 
 
-class QuestionBankTests(APITestCase):
+class QuestionBankTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.course = Course.objects.create(owner=self.user,
             title="نظام التشغيل", domain="بيئة التعامل مع الحاسوب", unit="البرمجيات",
@@ -184,8 +341,9 @@ class QuestionBankTests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
 
-class AttendanceFollowUpTests(APITestCase):
+class AttendanceFollowUpTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="1 ج م ع 1", level="أولى ثانوي")
         self.ali = Student.objects.create(school_class=self.cls, full_name="Ali Benali")
@@ -246,8 +404,9 @@ class AttendanceFollowUpTests(APITestCase):
         self.assertEqual(CustomDocument.objects.get(pk=generated.data["id"]).kind, "tracker-sheet")
 
 
-class SupportPlanTests(APITestCase):
+class SupportPlanTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج الدعم", level="أولى ثانوي")
         self.student = Student.objects.create(school_class=self.cls, full_name="تلميذ يحتاج دعمًا")
@@ -304,8 +463,9 @@ class SupportPlanTests(APITestCase):
 
 
 
-class AssignmentTests(APITestCase):
+class AssignmentTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج المهام", level="أولى ثانوي")
         self.ali = Student.objects.create(school_class=self.cls, full_name="Ali")
@@ -385,8 +545,9 @@ class AssignmentTests(APITestCase):
 
 
 
-class StudentDossierTests(APITestCase):
+class StudentDossierTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج الملف الفردي", level="أولى ثانوي")
         self.student = Student.objects.create(school_class=self.cls, full_name="تلميذ الملف الشامل")
@@ -438,8 +599,9 @@ class StudentDossierTests(APITestCase):
 
 
 
-class ClassAnalyticsTests(APITestCase):
+class ClassAnalyticsTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج التحليلات", level="أولى ثانوي")
         self.ali = Student.objects.create(school_class=self.cls, full_name="Ali")
@@ -494,8 +656,9 @@ class ClassAnalyticsTests(APITestCase):
 
 
 
-class TeacherTaskTests(APITestCase):
+class TeacherTaskTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج الإجراءات", level="أولى ثانوي")
         self.ali = Student.objects.create(school_class=self.cls, full_name="Ali")
@@ -564,8 +727,9 @@ class TeacherTaskTests(APITestCase):
         self.assertEqual(doc.source_type, "teacher-tasks")
 
 
-class TermPackTests(APITestCase):
+class TermPackTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج باقة الثلاثي", level="أولى ثانوي")
         self.ali = Student.objects.create(school_class=self.cls, full_name="Ali")
@@ -621,8 +785,9 @@ class TermPackTests(APITestCase):
         self.assertTrue(exported.content.startswith(b"%PDF-"))
 
 
-class PortfolioTests(APITestCase):
+class PortfolioTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         profile = TeacherProfile.objects.get_or_create(user=self.user)[0]
         profile.full_name = "الأستاذ سمير حداد"; profile.current_school = "ثانوية العقيد لطفي — وهران"
@@ -662,8 +827,9 @@ class PortfolioTests(APITestCase):
         self.assertTrue(exported.content.startswith(b"%PDF-"))
 
 
-class BackupTests(APITestCase):
+class BackupTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج النسخ الاحتياطي", level="أولى ثانوي")
         self.student = Student.objects.create(school_class=self.cls, full_name="Ali")
@@ -708,9 +874,199 @@ class BackupTests(APITestCase):
         self.assertEqual(again.data["created_count"], 0)
         self.assertEqual(again.data["skipped_count"], 1)
 
+    def test_backup_verify_valid_payload(self):
+        payload = json.loads(self.client.get("/api/backup/export/").content)
+        response = self.client.post("/api/backup/verify/", payload, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.data["valid"])
+        self.assertEqual(response.data["status"], "valid")
+        self.assertEqual(response.data["total_records"], payload["records"])
+        self.assertIn("SchoolClass", response.data["by_model"])
 
-class ProgressionTests(APITestCase):
+    def test_backup_verify_invalid_format(self):
+        response = self.client.post(
+            "/api/backup/verify/", {"format": "other", "data": []}, format="json"
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_backup_verify_empty_data(self):
+        response = self.client.post(
+            "/api/backup/verify/", {"format": "teacherhub-backup", "data": []}, format="json"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["valid"])
+        self.assertEqual(response.data["total_records"], 0)
+
+
+class SecurityAuditLogTests(TeacherAPITestCase):
+    """Security audit log: creation, filtering, immutability."""
+
     def setUp(self):
+        super().setUp()
+        from .models import SecurityAuditLog
+        self.audit_log = SecurityAuditLog.objects.create(
+            user=self.teacher,
+            action="login",
+            resource_type="system",
+            resource_label="Teacher workspace",
+            details={"method": "password", "success": True},
+            ip_address="127.0.0.1",
+            user_agent="Mozilla/5.0",
+        )
+
+    def test_list_audit_logs(self):
+        resp = self.client.get("/api/security-audit-logs/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        results = resp.data.get("results", resp.data) if isinstance(resp.data, dict) else resp.data
+        self.assertGreaterEqual(len(results), 1)
+
+    def test_filter_by_action(self):
+        resp = self.client.get("/api/security-audit-logs/?action=login")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        results = resp.data.get("results", resp.data) if isinstance(resp.data, dict) else resp.data
+        self.assertTrue(all(r["action"] == "login" for r in results))
+
+    def test_filter_by_user(self):
+        resp = self.client.get(f"/api/security-audit-logs/?user={self.teacher.id}")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        results = resp.data.get("results", resp.data) if isinstance(resp.data, dict) else resp.data
+        self.assertTrue(all(r["user"] == self.teacher.id for r in results))
+
+    def test_audit_log_is_append_only(self):
+        from rest_framework.exceptions import ValidationError
+        from .serializers import SecurityAuditLogSerializer
+        # Cannot update via serializer
+        serializer = SecurityAuditLogSerializer(instance=self.audit_log, data={"action": "logout"}, partial=True)
+        # Serializer may validate, but save() should raise
+        try:
+            serializer.is_valid(raise_exception=True)
+            with self.assertRaises(ValueError):
+                serializer.save()
+        except ValidationError:
+            pass
+
+    def test_audit_log_cannot_be_deleted(self):
+        with self.assertRaises(ValueError):
+            self.audit_log.delete()
+
+    def test_audit_log_serializer_fields(self):
+        from .serializers import SecurityAuditLogSerializer
+        serializer = SecurityAuditLogSerializer(instance=self.audit_log)
+        data = serializer.data
+        self.assertEqual(data["action"], "login")
+        self.assertEqual(data["user_name"], self.teacher.username)
+        self.assertEqual(data["ip_address"], "127.0.0.1")
+        self.assertIn("created_at", data)
+
+
+class ParentStudentPortalTests(TeacherAPITestCase):
+    """Parent and student portal read-only access."""
+
+    def setUp(self):
+        super().setUp()
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        from .models import (
+            Organization, School, AcademicYear, SchoolClass, Student,
+            TeacherProfile, Mark,
+        )
+        import datetime
+        self.organization = Organization.objects.create(
+            name="Portal Org", code="portal-org", status="active",
+        )
+        self.school = School.objects.create(
+            organization=self.organization, name="Portal School", code="portal-school", status="active",
+        )
+        self.academic_year = AcademicYear.objects.create(
+            organization=self.organization, school=self.school,
+            name="2025-2026",
+            start_date=datetime.date(2025, 9, 1),
+            end_date=datetime.date(2026, 6, 30),
+            status="active",
+        )
+        self.school_class = SchoolClass.objects.create(
+            name="Portal Class", level="5e", academic_year=self.academic_year,
+            school=self.school, organization=self.organization, owner=self.teacher,
+        )
+        self.student = Student.objects.create(
+            full_name="Portal Student", school_class=self.school_class,
+            organization=self.organization, school=self.school,
+        )
+        Mark.objects.create(student=self.student, term=1, continuous=12, supervised=13, exam=14)
+
+        # Parent user
+        self.parent_user = User.objects.create_user(
+            username="parent1", password="parent-pass-123",
+            first_name="Parent", last_name="One",
+        )
+        self.parent_profile = TeacherProfile.objects.create(
+            user=self.parent_user, role="parent",
+            linked_student=self.student, full_name="Parent One",
+        )
+
+        # Student user
+        self.student_user = User.objects.create_user(
+            username="student1", password="student-pass-123",
+            first_name="Portal", last_name="Student",
+        )
+        self.student_profile = TeacherProfile.objects.create(
+            user=self.student_user, role="student",
+            linked_student=self.student, full_name="Portal Student",
+        )
+
+    def _auth_as(self, user):
+        self.client.force_authenticate(user=user)
+
+    def test_parent_portal_summary(self):
+        self._auth_as(self.parent_user)
+        resp = self.client.get("/api/parent-portal/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data["student"]["full_name"], "Portal Student")
+        self.assertEqual(resp.data["marks_count"], 1)
+
+    def test_parent_portal_marks(self):
+        self._auth_as(self.parent_user)
+        resp = self.client.get("/api/parent-portal/marks/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(len(resp.data), 1)
+
+    def test_parent_portal_attendance(self):
+        self._auth_as(self.parent_user)
+        resp = self.client.get("/api/parent-portal/attendance/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(len(resp.data), 0)
+
+    def test_parent_portal_sessions(self):
+        self._auth_as(self.parent_user)
+        resp = self.client.get("/api/parent-portal/sessions/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(len(resp.data), 0)
+
+    def test_student_portal_summary(self):
+        self._auth_as(self.student_user)
+        resp = self.client.get("/api/student-portal/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data["student"]["full_name"], "Portal Student")
+
+    def test_student_portal_marks(self):
+        self._auth_as(self.student_user)
+        resp = self.client.get("/api/student-portal/marks/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(len(resp.data), 1)
+
+    def test_teacher_cannot_access_parent_portal(self):
+        resp = self.client.get("/api/parent-portal/")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_parent_cannot_access_student_portal(self):
+        self._auth_as(self.parent_user)
+        resp = self.client.get("/api/student-portal/")
+        self.assertEqual(resp.status_code, 403)
+
+
+class ProgressionTests(TeacherAPITestCase):
+    def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج التوزيع السنوي", level="أولى ثانوي")
         # timetable slot: every day of week is unrealistic; use weekday of a known Monday (python Mon=0 -> slot weekday 1)
@@ -750,8 +1106,9 @@ class ProgressionTests(APITestCase):
         self.assertTrue(exported.content.startswith(b"%PDF-"))
 
 
-class ParentCampaignTests(APITestCase):
+class ParentCampaignTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج مراسلات الأولياء", level="أولى ثانوي")
         self.ali = Student.objects.create(school_class=self.cls, full_name="Ali")
@@ -790,8 +1147,9 @@ class ParentCampaignTests(APITestCase):
         self.assertTrue(exported.content.startswith(b"%PDF-"))
 
 
-class PlannerTests(APITestCase):
+class PlannerTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج التخطيط الأسبوعي", level="أولى ثانوي")
         TimetableSlot.objects.create(school_class=self.cls, weekday=1, start_time="10:00", room="مخبر الإعلام الآلي")  # Monday
@@ -808,7 +1166,16 @@ class PlannerTests(APITestCase):
         self.assertEqual(len(monday["entries"]), 1)
         entry = monday["entries"][0]
         self.assertEqual(entry["next_course"]["title"], "تقنية المعلومات")
+        self.assertIsNone(entry["next_plan"])
         self.assertIsNone(entry["session"])
+
+    def test_week_view_includes_latest_plan_for_the_suggested_course(self):
+        LessonPlan.objects.create(owner=self.user, course=self.course, title="خطة سابقة")
+        latest = LessonPlan.objects.create(owner=self.user, course=self.course, title="الخطة الحالية")
+        data = self.client.get(f"/api/planner/week/?date={self.monday}").data
+        monday = next(day for day in data["days"] if day["date"] == self.monday)
+        entry = monday["entries"][0]
+        self.assertEqual(entry["next_plan"], {"id": latest.id, "title": "الخطة الحالية"})
 
     def test_logging_session_marks_entry_done(self):
         created = self.client.post("/api/sessions/", {
@@ -818,6 +1185,7 @@ class PlannerTests(APITestCase):
         data = self.client.get(f"/api/planner/week/?date={self.monday}").data
         monday = next(day for day in data["days"] if day["date"] == self.monday)
         self.assertIsNotNone(monday["entries"][0]["session"])
+        self.assertIsNone(monday["entries"][0]["next_plan"])
         self.assertEqual(data["summary"]["logged"], 1)
 
     def test_generate_weekly_document(self):
@@ -829,8 +1197,9 @@ class PlannerTests(APITestCase):
         self.assertTrue(exported.content.startswith(b"%PDF-"))
 
 
-class GradebookTests(APITestCase):
+class GradebookTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج دفتر التنقيط", level="أولى ثانوي")
         self.ali = Student.objects.create(school_class=self.cls, full_name="Ali")
@@ -868,8 +1237,9 @@ class GradebookTests(APITestCase):
         self.assertEqual(by_name.data["unmatched"], ["تلميذ غير موجود"])
 
 
-class MeetingTests(APITestCase):
+class MeetingTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج مجلس القسم", level="أولى ثانوي")
         self.student = Student.objects.create(school_class=self.cls, full_name="Sara")
@@ -915,8 +1285,9 @@ class MeetingTests(APITestCase):
         self.assertTrue(any("Sara" in (row.get("text") or "") for row in response.data["suggested_decisions"]))
 
 
-class YearReviewTests(APITestCase):
+class YearReviewTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="فوج الحصيلة السنوية", level="أولى ثانوي")
         self.ali = Student.objects.create(school_class=self.cls, full_name="Ali")
@@ -949,8 +1320,9 @@ class YearReviewTests(APITestCase):
         self.assertTrue(exported.content.startswith(b"%PDF-"))
 
 
-class DesignerTests(APITestCase):
+class DesignerTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.journal = Journal.objects.create(owner=self.user, title="دفتر المصمم", school_year="2026 / 2027")
         Holiday.objects.create(owner=self.user, name="عطلة المصمم", start_date="2026-12-19", end_date="2026-12-25")
@@ -997,8 +1369,9 @@ class DesignerTests(APITestCase):
         self.assertNotIn("مؤسسات مقاطعة التفتيش", text)
 
 
-class ExamSeasonTests(APITestCase):
+class ExamSeasonTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         import datetime as _dt
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="2ع1 امتحانات", level="ثانية ثانوي")
@@ -1062,8 +1435,9 @@ class ExamSeasonTests(APITestCase):
         self.assertEqual(res.status_code, 400)
 
 
-class CeremonyTests(APITestCase):
+class CeremonyTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         import datetime as _dt
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="2ع1 تكريم", level="ثانية ثانوي")
@@ -1109,8 +1483,9 @@ class CeremonyTests(APITestCase):
         self.assertIn("تلميذ ممتاز", str(board.data["content"]))
 
 
-class ParentMeetingTests(APITestCase):
+class ParentMeetingTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="1ع1 لقاءات", level="أولى ثانوي")
         def student(name, marks):
@@ -1164,8 +1539,9 @@ class ParentMeetingTests(APITestCase):
         self.assertIn("13:00", str(agenda.data["content"]))
 
 
-class AssistantDigestTests(APITestCase):
+class AssistantDigestTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         import datetime as _dt
         self.user = local_user()
         self.today = _dt.date.today()
@@ -1206,8 +1582,9 @@ class AssistantDigestTests(APITestCase):
         self.assertEqual(task.origin, "auto")
 
 
-class OpeningWizardTests(APITestCase):
+class OpeningWizardTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
 
     def test_opening_flow(self):
@@ -1238,8 +1615,9 @@ class OpeningWizardTests(APITestCase):
         self.assertIn("1ع1 افتتاح", str(doc.data["content"]))
 
 
-class InspectionSimulationTests(APITestCase):
+class InspectionSimulationTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         import datetime as _dt
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="1ع1 تفتيش", level="أولى ثانوي")
@@ -1269,8 +1647,9 @@ class InspectionSimulationTests(APITestCase):
         self.assertIn("محاور التفتيش الستة", str(res.data["content"]))
 
 
-class LessonLinkingTests(APITestCase):
+class LessonLinkingTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.course = Course.objects.create(owner=self.user, title="درس الربط التجريبي", order=50)
         self.plan = LessonPlan.objects.create(owner=self.user, course=self.course, title="خطة درس الربط التجريبي")
@@ -1294,11 +1673,24 @@ class LessonLinkingTests(APITestCase):
         self.assertIn(f"/courses?lesson={self.course.id}", [row["route"] for row in groups["courses"]["results"]])
         self.assertIn(f"/lesson-plans?plan={self.plan.id}", [row["route"] for row in groups["plans"]["results"]])
 
+    def test_taught_session_auto_links_its_course_plan(self):
+        school_class = SchoolClass.objects.create(owner=self.user, name="فوج ربط الخطة", level="أولى ثانوي")
+        response = self.client.post("/api/sessions/", {
+            "school_class": school_class.id,
+            "course": self.course.id,
+            "date": "2026-11-16",
+            "status": "done",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.data["lesson_plan"], self.plan.id)
+        self.assertEqual(Session.objects.get(pk=response.data["id"]).lesson_plan_id, self.plan.id)
 
-class CoverDesignerTests(APITestCase):
+
+class CoverDesignerTests(TeacherAPITestCase):
     TINY_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII="
 
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.journal = Journal.objects.create(owner=self.user, title="دفتر الغلاف", school_year="2026 / 2027",
                                               institution="ثانوية تجريبية")
@@ -1327,8 +1719,9 @@ class CoverDesignerTests(APITestCase):
         self.assertGreaterEqual(len(images), 1)
 
 
-class RemedialTests(APITestCase):
+class RemedialTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         import datetime as _dt
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="1ع1 استدراك", level="أولى ثانوي")
@@ -1376,8 +1769,9 @@ class RemedialTests(APITestCase):
         self.assertEqual(again.data, {"created": 0, "skipped": 2})
 
 
-class CourseParityTests(APITestCase):
+class CourseParityTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.course = Course.objects.create(owner=self.user, title="درس التكافؤ", order=60,
                                             key_points=["نقطة أولى", "نقطة ثانية"], summary="ملخص الدرس")
@@ -1403,8 +1797,9 @@ class CourseParityTests(APITestCase):
         self.assertIn("نقطة أولى", str(res.data["content"]))
 
 
-class AssessmentCentreTests(APITestCase):
+class AssessmentCentreTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="1 ج م ع 1", level="أولى ثانوي")
         self.other_cls = SchoolClass.objects.create(owner=self.user, name="1 ج م ع 2", level="أولى ثانوي")
@@ -1481,8 +1876,9 @@ class AssessmentCentreTests(APITestCase):
         self.assertIn("تحليل نتائج", doc.title)
 
 
-class QuestionGenerationQuotaTests(APITestCase):
+class QuestionGenerationQuotaTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.course_a = Course.objects.create(owner=self.user, order=1, title="درس أ", key_points=["نقطة أ"])
         self.course_b = Course.objects.create(owner=self.user, order=2, title="درس ب", key_points=["نقطة ب"])
@@ -1518,8 +1914,9 @@ class QuestionGenerationQuotaTests(APITestCase):
         self.assertEqual(again.data["created"], 0)
 
 
-class GradebookSyncTests(APITestCase):
+class GradebookSyncTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="1 ج م ع 9", level="أولى ثانوي")
         self.s1 = Student.objects.create(school_class=self.cls, full_name="تلميذ أ")
@@ -1579,8 +1976,9 @@ class GradebookSyncTests(APITestCase):
         self.assertEqual(preview.data["summary"]["eligible_assessments"], 1)
 
 
-class AssessmentHistoryExportTests(APITestCase):
+class AssessmentHistoryExportTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="1 ج م ع 9", level="أولى ثانوي")
         self.s1 = Student.objects.create(school_class=self.cls, full_name="تلميذ أ")
@@ -1621,8 +2019,9 @@ class AssessmentHistoryExportTests(APITestCase):
         self.assertIn("نتائج التقويمات والفروض", headings)
 
 
-class AssessmentSupportGroupTests(APITestCase):
+class AssessmentSupportGroupTests(TeacherAPITestCase):
     def setUp(self):
+        super().setUp()
         self.user = local_user()
         self.cls = SchoolClass.objects.create(owner=self.user, name="1 ج م ع 9", level="أولى ثانوي")
         self.s1 = Student.objects.create(school_class=self.cls, full_name="تلميذ أ")
@@ -1662,7 +2061,7 @@ class AssessmentSupportGroupTests(APITestCase):
         self.assertEqual(empty.status_code, 400)
 
 
-class SeedIfEmptyTests(APITestCase):
+class SeedIfEmptyTests(TeacherAPITestCase):
     def test_loads_snapshot_once_into_empty_database(self):
         self.assertEqual(Course.objects.count(), 0)
         call_command("seed_if_empty", verbosity=0)
@@ -1695,3 +2094,393 @@ class SeedIfEmptyTests(APITestCase):
         call_command("seed_if_empty", verbosity=0)
         self.assertEqual(Course.objects.count(), 1)
         self.assertEqual(LessonPlan.objects.count(), 0)
+
+
+class GradeSubmissionApprovalTests(TeacherAPITestCase):
+    """Grade result submission → approve → publish workflow."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import (
+            Organization, School, AcademicYear, SchoolClass, Course,
+            Student, GradeRuleSet, CalculatedResult,
+        )
+        import datetime
+        self.organization = Organization.objects.create(
+            name="Test Org", code="test-org", status="active",
+        )
+        self.school = School.objects.create(
+            organization=self.organization, name="Test School", code="test-school", status="active",
+        )
+        self.academic_year = AcademicYear.objects.create(
+            organization=self.organization, school=self.school,
+            name="2025-2026",
+            start_date=datetime.date(2025, 9, 1),
+            end_date=datetime.date(2026, 6, 30),
+            status="active",
+        )
+        self.course = Course.objects.create(
+            owner=self.teacher, title="Mathematics",
+        )
+        self.school_class = SchoolClass.objects.create(
+            name="Grade 5A", level="5e", academic_year=self.academic_year,
+            school=self.school, organization=self.organization, owner=self.teacher,
+        )
+        self.student = Student.objects.create(
+            full_name="Test Student", school_class=self.school_class,
+            organization=self.organization, school=self.school,
+        )
+        self.ruleset = GradeRuleSet.objects.create(
+            school=self.school, subject=self.course, academic_year=self.academic_year,
+            term=1, name="Test Ruleset v1", version=1, is_active=True, is_approved=True,
+            formula_config={"component_weights": {"continuous": 0.3, "supervised": 0.3, "exam": 0.4},
+                            "rounding": 2, "pass_threshold": 50},
+            component_max={"continuous": 20, "supervised": 20, "exam": 20},
+            effective_from="2025-09-01",
+            created_by=self.teacher,
+        )
+        self.result = CalculatedResult.objects.create(
+            student=self.student, school_class=self.school_class, subject=self.course,
+            academic_year=self.academic_year, term=1, ruleset=self.ruleset,
+            ruleset_version=1, input_snapshot={}, calculated_value=15.5,
+            calculated_percent=77.5, calculation_breakdown={}, status="calculated",
+        )
+
+    def test_submit_transitions_calculated_to_submitted(self):
+        url = f"/api/calculated-results/{self.result.id}/submit/"
+        resp = self.client.post(url, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.result.refresh_from_db()
+        self.assertEqual(self.result.status, "submitted")
+        self.assertEqual(self.result.submitted_by, self.teacher)
+        self.assertIsNotNone(self.result.submitted_at)
+
+    def test_submit_rejects_already_submitted(self):
+        self.result.status = "submitted"
+        self.result.submitted_by = self.teacher
+        self.result.submitted_at = timezone.now()
+        self.result.save()
+        url = f"/api/calculated-results/{self.result.id}/submit/"
+        resp = self.client.post(url, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_approve_transitions_submitted_to_approved(self):
+        self.result.status = "submitted"
+        self.result.submitted_by = self.teacher
+        self.result.submitted_at = timezone.now()
+        self.result.save()
+        url = f"/api/calculated-results/{self.result.id}/approve/"
+        resp = self.client.post(url, {"comment": "Looks good"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.result.refresh_from_db()
+        self.assertEqual(self.result.status, "approved")
+        self.assertEqual(self.result.reviewed_by, self.teacher)
+        self.assertEqual(self.result.review_comment, "Looks good")
+        self.assertIsNotNone(self.result.reviewed_at)
+
+    def test_approve_rejects_not_submitted(self):
+        url = f"/api/calculated-results/{self.result.id}/approve/"
+        resp = self.client.post(url, {"comment": "x"}, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_reject_requires_comment(self):
+        self.result.status = "submitted"
+        self.result.submitted_by = self.teacher
+        self.result.submitted_at = timezone.now()
+        self.result.save()
+        url = f"/api/calculated-results/{self.result.id}/reject/"
+        resp = self.client.post(url, {}, format="json")
+        self.assertEqual(resp.status_code, 400)
+
+    def test_reject_transitions_submitted_to_rejected(self):
+        self.result.status = "submitted"
+        self.result.submitted_by = self.teacher
+        self.result.submitted_at = timezone.now()
+        self.result.save()
+        url = f"/api/calculated-results/{self.result.id}/reject/"
+        resp = self.client.post(url, {"comment": "Needs correction"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.result.refresh_from_db()
+        self.assertEqual(self.result.status, "rejected")
+        self.assertEqual(self.result.review_comment, "Needs correction")
+
+    def test_publish_transitions_approved_to_published(self):
+        self.result.status = "approved"
+        self.result.reviewed_by = self.teacher
+        self.result.reviewed_at = timezone.now()
+        self.result.save()
+        url = f"/api/calculated-results/{self.result.id}/publish/"
+        resp = self.client.post(url, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.result.refresh_from_db()
+        self.assertEqual(self.result.status, "published")
+
+    def test_void_transitions_published_to_voided(self):
+        self.result.status = "published"
+        self.result.reviewed_by = self.teacher
+        self.result.reviewed_at = timezone.now()
+        self.result.save()
+        url = f"/api/calculated-results/{self.result.id}/void/"
+        resp = self.client.post(url, {"comment": "Error in data"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.result.refresh_from_db()
+        self.assertEqual(self.result.status, "voided")
+
+
+class TimetableConflictTests(TeacherAPITestCase):
+    """Timetable slot conflict detection: same class / same room overlapping times."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import (
+            Organization, School, AcademicYear, SchoolClass, TimetableSlot,
+        )
+        import datetime
+        self.organization = Organization.objects.create(
+            name="TT Org", code="tt-org", status="active",
+        )
+        self.school = School.objects.create(
+            organization=self.organization, name="TT School", code="tt-school", status="active",
+        )
+        self.academic_year = AcademicYear.objects.create(
+            organization=self.organization, school=self.school,
+            name="2025-2026",
+            start_date=datetime.date(2025, 9, 1),
+            end_date=datetime.date(2026, 6, 30),
+            status="active",
+        )
+        self.cls_a = SchoolClass.objects.create(
+            name="Class A", level="5e", academic_year=self.academic_year,
+            school=self.school, organization=self.organization, owner=self.teacher,
+        )
+        self.cls_b = SchoolClass.objects.create(
+            name="Class B", level="6e", academic_year=self.academic_year,
+            school=self.school, organization=self.organization, owner=self.teacher,
+        )
+
+    def test_no_conflict_when_times_do_not_overlap(self):
+        from .models import TimetableSlot
+        s1 = TimetableSlot.objects.create(
+            school_class=self.cls_a, weekday=1, start_time="08:00", end_time="08:45", room="Room 101",
+        )
+        s2 = TimetableSlot.objects.create(
+            school_class=self.cls_a, weekday=1, start_time="09:00", end_time="09:45", room="Room 101",
+        )
+        serializer = TimetableSlotSerializer(instance=s2)
+        self.assertIsNone(serializer.data.get("conflict_warning"))
+
+    def test_class_conflict_detected_on_create(self):
+        from .models import TimetableSlot
+        from rest_framework.exceptions import ValidationError
+        TimetableSlot.objects.create(
+            school_class=self.cls_a, weekday=1, start_time="08:00", end_time="08:45", room="Room 101",
+        )
+        # Overlapping slot for same class, same weekday
+        serializer = TimetableSlotSerializer(data={
+            "school_class": self.cls_a.id,
+            "weekday": 1,
+            "start_time": "08:20",
+            "end_time": "09:00",
+            "room": "Room 102",
+        })
+        with self.assertRaises(ValidationError):
+            serializer.is_valid(raise_exception=True)
+
+    def test_room_conflict_detected_on_create(self):
+        from .models import TimetableSlot
+        from rest_framework.exceptions import ValidationError
+        TimetableSlot.objects.create(
+            school_class=self.cls_a, weekday=1, start_time="08:00", end_time="08:45", room="Room 101",
+        )
+        # Different class, same room, overlapping time
+        serializer = TimetableSlotSerializer(data={
+            "school_class": self.cls_b.id,
+            "weekday": 1,
+            "start_time": "08:20",
+            "end_time": "09:00",
+            "room": "Room 101",
+        })
+        with self.assertRaises(ValidationError):
+            serializer.is_valid(raise_exception=True)
+
+    def test_no_conflict_different_day(self):
+        from .models import TimetableSlot
+        TimetableSlot.objects.create(
+            school_class=self.cls_a, weekday=1, start_time="08:00", end_time="08:45", room="Room 101",
+        )
+        # Same class, same time, different weekday — no conflict
+        serializer = TimetableSlotSerializer(data={
+            "school_class": self.cls_a.id,
+            "weekday": 2,
+            "start_time": "08:00",
+            "end_time": "08:45",
+            "room": "Room 101",
+        })
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_detect_conflicts_endpoint(self):
+        from .models import TimetableSlot
+        TimetableSlot.objects.create(
+            school_class=self.cls_a, weekday=1, start_time="08:00", end_time="08:45", room="Room 101",
+        )
+        TimetableSlot.objects.create(
+            school_class=self.cls_a, weekday=1, start_time="08:20", end_time="09:00", room="Room 102",
+        )
+        resp = self.client.get("/api/timetable/detect_conflicts/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["conflicts"][0]["type"], "class")
+
+
+class ComputerLabSeatingTests(TeacherAPITestCase):
+    """Computer lab and seating assignment CRUD and validation."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import (
+            Organization, School, AcademicYear, SchoolClass, Student,
+            ComputerLab, Seat, SeatingAssignment,
+        )
+        import datetime
+        self.organization = Organization.objects.create(
+            name="Lab Org", code="lab-org", status="active",
+        )
+        self.school = School.objects.create(
+            organization=self.organization, name="Lab School", code="lab-school", status="active",
+        )
+        self.academic_year = AcademicYear.objects.create(
+            organization=self.organization, school=self.school,
+            name="2025-2026",
+            start_date=datetime.date(2025, 9, 1),
+            end_date=datetime.date(2026, 6, 30),
+            status="active",
+        )
+        self.school_class = SchoolClass.objects.create(
+            name="Class A", level="5e", academic_year=self.academic_year,
+            school=self.school, organization=self.organization, owner=self.teacher,
+        )
+        self.student = Student.objects.create(
+            full_name="Test Student", school_class=self.school_class,
+            organization=self.organization, school=self.school,
+        )
+        self.lab = ComputerLab.objects.create(
+            school=self.school, name="مخبر الإعلام الآلي 1", code="lab-1",
+            capacity=20, room_number="101", status="active",
+            computers_count=20, operating_system="Windows 11",
+            software_list=["Word", "Excel", "PowerPoint"],
+            notes="مخبر رئيسي",
+        )
+        self.seat_a1 = Seat.objects.create(
+            lab=self.lab, seat_number="A1", row="A", column=1, status="available",
+        )
+        self.seat_a2 = Seat.objects.create(
+            lab=self.lab, seat_number="A2", row="A", column=2, status="available",
+        )
+
+    def test_create_computer_lab(self):
+        from .serializers import ComputerLabSerializer
+        serializer = ComputerLabSerializer(data={
+            "school": self.school.id,
+            "name": "مخبر 2",
+            "code": "lab-2",
+            "capacity": 15,
+            "room_number": "102",
+            "status": "active",
+        })
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        lab = serializer.save()
+        self.assertEqual(lab.code, "lab-2")
+        self.assertEqual(lab.capacity, 15)
+
+    def test_duplicate_lab_code_rejected(self):
+        from .serializers import ComputerLabSerializer
+        from rest_framework.exceptions import ValidationError
+        serializer = ComputerLabSerializer(data={
+            "school": self.school.id,
+            "name": "مخبر مكرر",
+            "code": "lab-1",  # already exists
+            "capacity": 10,
+        })
+        with self.assertRaises(ValidationError):
+            serializer.is_valid(raise_exception=True)
+
+    def test_create_seat(self):
+        from .serializers import SeatSerializer
+        serializer = SeatSerializer(data={
+            "lab": self.lab.id,
+            "seat_number": "B1",
+            "row": "B",
+            "column": 1,
+            "status": "available",
+        })
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        seat = serializer.save()
+        self.assertEqual(seat.seat_number, "B1")
+
+    def test_duplicate_seat_number_rejected(self):
+        from .serializers import SeatSerializer
+        from rest_framework.exceptions import ValidationError
+        serializer = SeatSerializer(data={
+            "lab": self.lab.id,
+            "seat_number": "A1",  # already exists
+            "row": "A",
+            "column": 1,
+            "status": "available",
+        })
+        with self.assertRaises(ValidationError):
+            serializer.is_valid(raise_exception=True)
+
+    def test_create_seating_assignment(self):
+        from .serializers import SeatingAssignmentSerializer
+        serializer = SeatingAssignmentSerializer(data={
+            "student": self.student.id,
+            "lab": self.lab.id,
+            "seat": self.seat_a1.id,
+            "academic_year": self.academic_year.id,
+            "term": 1,
+        })
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        assignment = serializer.save(assigned_by=self.teacher)
+        self.assertEqual(assignment.student, self.student)
+        self.assertEqual(assignment.seat, self.seat_a1)
+        self.assertEqual(assignment.assigned_by, self.teacher)
+
+    def test_duplicate_seat_assignment_rejected(self):
+        from .models import SeatingAssignment
+        from .serializers import SeatingAssignmentSerializer
+        from rest_framework.exceptions import ValidationError
+        # First assignment
+        SeatingAssignment.objects.create(
+            student=self.student, lab=self.lab, seat=self.seat_a1,
+            academic_year=self.academic_year, term=1, assigned_by=self.teacher,
+        )
+        # Same seat, same term — conflict
+        serializer = SeatingAssignmentSerializer(data={
+            "student": self.student.id,
+            "lab": self.lab.id,
+            "seat": self.seat_a1.id,
+            "academic_year": self.academic_year.id,
+            "term": 1,
+        })
+        with self.assertRaises(ValidationError):
+            serializer.is_valid(raise_exception=True)
+
+    def test_computer_lab_seat_counts(self):
+        from .serializers import ComputerLabSerializer
+        serializer = ComputerLabSerializer(instance=self.lab)
+        data = serializer.data
+        self.assertEqual(data["seat_count"], 2)
+        self.assertEqual(data["available_seats"], 2)
+        self.assertEqual(data["occupied_seats"], 0)
+
+    def test_detect_conflicts_endpoint_with_labs(self):
+        from .models import TimetableSlot
+        # Create a timetable conflict to verify endpoint still works with labs present
+        TimetableSlot.objects.create(
+            school_class=self.school_class, weekday=1, start_time="08:00", end_time="08:45", room="Room 101",
+        )
+        resp = self.client.get("/api/timetable/detect_conflicts/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()
+        self.assertEqual(data["count"], 0)

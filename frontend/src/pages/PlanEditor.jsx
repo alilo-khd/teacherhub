@@ -119,46 +119,47 @@ export default function PlanEditorPage() {
             <h6 className="fw-bold mb-3">{t("بيانات الخطة")}</h6>
             <div className="row g-2">
               <div className="col-12">
-                <label className="form-label small fw-bold">{t("عنوان الدرس")} *</label>
-                <input className="form-control" value={form.title} onChange={(e) => set("title", e.target.value)} />
+                <label htmlFor="lesson-plan-title" className="form-label small fw-bold">{t("عنوان الدرس")} *</label>
+                <input id="lesson-plan-title" className="form-control" value={form.title} required
+                  onChange={(e) => set("title", e.target.value)} />
               </div>
               <div className="col-12">
-                <label className="form-label small fw-bold">{t("الدرس المرتبط من المقرر")}</label>
-                <select className="form-select" value={form.course} onChange={(e) => set("course", e.target.value)}>
+                <label htmlFor="lesson-plan-course" className="form-label small fw-bold">{t("الدرس المرتبط من المقرر")}</label>
+                <select id="lesson-plan-course" className="form-select" value={form.course} onChange={(e) => set("course", e.target.value)}>
                   <option value="">{t("— بدون ربط بدرس —")}</option>
                   {courses.map((c) => <option key={c.id} value={c.id}>{c.order}. {c.title}</option>)}
                 </select>
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small fw-bold">{t("المادة")}</label>
-                <input className="form-control" value={form.subject} onChange={(e) => set("subject", e.target.value)} />
+                <label htmlFor="lesson-plan-subject" className="form-label small fw-bold">{t("المادة")}</label>
+                <input id="lesson-plan-subject" className="form-control" value={form.subject} onChange={(e) => set("subject", e.target.value)} />
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small fw-bold">{t("المستوى")}</label>
-                <input className="form-control" value={form.level} onChange={(e) => set("level", e.target.value)} />
+                <label htmlFor="lesson-plan-level" className="form-label small fw-bold">{t("المستوى")}</label>
+                <input id="lesson-plan-level" className="form-control" value={form.level} onChange={(e) => set("level", e.target.value)} />
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small fw-bold">{t("المدة (دقيقة)")}</label>
-                <input type="number" className="form-control" value={form.duration} onChange={(e) => set("duration", e.target.value)} />
+                <label htmlFor="lesson-plan-duration" className="form-label small fw-bold">{t("المدة (دقيقة)")}</label>
+                <input id="lesson-plan-duration" type="number" min="1" className="form-control" value={form.duration} onChange={(e) => set("duration", e.target.value)} />
               </div>
               <div className="col-6 col-md-3">
-                <label className="form-label small fw-bold">{t("سمة الخطة")}</label>
-                <select className="form-select" value={form.theme} onChange={(e) => set("theme", e.target.value)}>
+                <label htmlFor="lesson-plan-theme" className="form-label small fw-bold">{t("سمة الخطة")}</label>
+                <select id="lesson-plan-theme" className="form-select" value={form.theme} onChange={(e) => set("theme", e.target.value)}>
                   <option value="">{t("بدون سمة")}</option>
                   {themes.map((x) => <option key={x.id} value={x.id}>{x.name_ar}</option>)}
                 </select>
               </div>
               <div className="col-12 col-md-6">
-                <label className="form-label small fw-bold">{t("المجال التعلمي")}</label>
-                <input className="form-control" value={form.domain} onChange={(e) => set("domain", e.target.value)} />
+                <label htmlFor="lesson-plan-domain" className="form-label small fw-bold">{t("المجال التعلمي")}</label>
+                <input id="lesson-plan-domain" className="form-control" value={form.domain} onChange={(e) => set("domain", e.target.value)} />
               </div>
               <div className="col-12 col-md-6">
-                <label className="form-label small fw-bold">{t("الوحدة")}</label>
-                <input className="form-control" value={form.unit} onChange={(e) => set("unit", e.target.value)} />
+                <label htmlFor="lesson-plan-unit" className="form-label small fw-bold">{t("الوحدة")}</label>
+                <input id="lesson-plan-unit" className="form-control" value={form.unit} onChange={(e) => set("unit", e.target.value)} />
               </div>
               <div className="col-12">
-                <label className="form-label small fw-bold">{t("أهداف الدرس / الكفاية المستهدفة")}</label>
-                <textarea className="form-control" rows="4" value={form.objectives} onChange={(e) => set("objectives", e.target.value)} />
+                <label htmlFor="lesson-plan-objectives" className="form-label small fw-bold">{t("أهداف الدرس / الكفاية المستهدفة")}</label>
+                <textarea id="lesson-plan-objectives" className="form-control" rows="4" value={form.objectives} onChange={(e) => set("objectives", e.target.value)} />
               </div>
             </div>
           </div></div>
@@ -173,37 +174,47 @@ export default function PlanEditorPage() {
             <div className="d-flex flex-column gap-2">
               {(form.phases || []).map((phase, index) => (
                 <div key={index} className="phase-row">
-                  <div className="d-flex gap-2 align-items-center mb-2">
+                  <div className="phase-toolbar mb-2">
                     <span className="badge text-bg-dark">{index + 1}</span>
-                    <input className="form-control form-control-sm fw-bold" value={phase.phase}
+                    <input className="form-control form-control-sm fw-bold phase-name-input" value={phase.phase}
+                      aria-label={`${t("اسم المرحلة")} ${index + 1}`}
                       onChange={(e) => setPhase(index, "phase", e.target.value)} placeholder={t("اسم المرحلة")} />
-                    <input type="number" className="form-control form-control-sm phase-minutes" value={phase.minutes}
+                    <input type="number" min="0" className="form-control form-control-sm phase-minutes" value={phase.minutes}
+                      aria-label={`${t("الدقائق")} ${index + 1}`}
                       onChange={(e) => setPhase(index, "minutes", e.target.value)} title={t("الدقائق")} />
-                    <button className="btn btn-sm btn-light border" onClick={() => movePhase(index, -1)}>↑</button>
-                    <button className="btn btn-sm btn-light border" onClick={() => movePhase(index, 1)}>↓</button>
-                    <button className="btn btn-sm btn-outline-danger" onClick={() => setForm((f) => ({ ...f, phases: f.phases.filter((_, i) => i !== index) }))}>✕</button>
+                    <button type="button" className="btn btn-sm btn-light border" disabled={index === 0}
+                      aria-label={`${t("نقل المرحلة للأعلى")} ${index + 1}`} onClick={() => movePhase(index, -1)}><span aria-hidden="true">↑</span></button>
+                    <button type="button" className="btn btn-sm btn-light border" disabled={index === form.phases.length - 1}
+                      aria-label={`${t("نقل المرحلة للأسفل")} ${index + 1}`} onClick={() => movePhase(index, 1)}><span aria-hidden="true">↓</span></button>
+                    <button type="button" className="btn btn-sm btn-outline-danger"
+                      aria-label={`${t("حذف المرحلة")} ${phase.phase || index + 1}`}
+                      onClick={() => setForm((f) => ({ ...f, phases: f.phases.filter((_, i) => i !== index) }))}>
+                      <span aria-hidden="true">✕</span>
+                    </button>
                   </div>
                   <div className="row g-2">
                     <div className="col-12 col-md-6">
                       <textarea className="form-control form-control-sm" rows="2" value={phase.teacher}
+                        aria-label={`${t("إجراءات الأستاذ")} ${index + 1}`}
                         onChange={(e) => setPhase(index, "teacher", e.target.value)} placeholder={t("إجراءات الأستاذ")} />
                     </div>
                     <div className="col-12 col-md-6">
                       <textarea className="form-control form-control-sm" rows="2" value={phase.learners}
+                        aria-label={`${t("أنشطة المتعلمين")} ${index + 1}`}
                         onChange={(e) => setPhase(index, "learners", e.target.value)} placeholder={t("أنشطة المتعلمين")} />
                     </div>
                   </div>
                 </div>
               ))}
             </div>
-            <button className="btn btn-outline-primary rounded-pill mt-3"
+            <button type="button" className="btn btn-outline-primary rounded-pill mt-3"
               onClick={() => setForm((f) => ({ ...f, phases: [...f.phases, { phase: "", minutes: 10, teacher: "", learners: "" }] }))}>
               + {t("إضافة مرحلة")}
             </button>
           </div></div>
 
           <div className="d-flex gap-2 mb-4">
-            <button className="btn btn-primary rounded-pill px-5" disabled={saving} onClick={save}>
+            <button type="button" className="btn btn-primary rounded-pill px-5" disabled={saving} onClick={save}>
               {saving ? <span className="spinner-border spinner-border-sm" /> : <><Icon name="check" size={16} /> {editing ? t("حفظ الخطة") : t("إنشاء الخطة")}</>}
             </button>
             <Link to="/lesson-plans" className="btn btn-light rounded-pill px-4">{t("إلغاء")}</Link>

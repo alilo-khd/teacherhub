@@ -18,4 +18,4 @@ COPY backend/requirements.txt ./
 RUN pip install -r requirements.txt
 COPY backend/ ./
 COPY --from=frontend /app/frontend/dist /app/frontend/dist
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_if_empty && python manage.py collectstatic --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 2 --timeout 120"]
+CMD ["sh", "-c", "python manage.py migrate --noinput && if [ \"${DJANGO_DEBUG:-1}\" = \"0\" ]; then python manage.py createcachetable teacherhub_cache --database default; fi && python manage.py seed_if_empty && python manage.py collectstatic --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 2 --threads 2 --timeout 120"]

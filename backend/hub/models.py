@@ -133,6 +133,10 @@ WEEKDAY_NAMES = ["الأحد", "الاثنين", "الثلاثاء", "الأرب
 
 class SchoolClass(models.Model):
     """A class / group (فوج) the teacher teaches."""
+    organization = models.ForeignKey("Organization", on_delete=models.CASCADE, related_name="classes", null=True, blank=True)
+    school = models.ForeignKey("School", on_delete=models.CASCADE, related_name="classes", null=True, blank=True)
+    campus = models.ForeignKey("Campus", on_delete=models.SET_NULL, null=True, blank=True, related_name="classes")
+    academic_year = models.ForeignKey("AcademicYear", on_delete=models.CASCADE, related_name="classes", null=True, blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="classes")
     name = models.CharField(max_length=80)                       # e.g. 1 ج م ع 1
     level = models.CharField(max_length=80, blank=True, default="أولى ثانوي ج م ع")
@@ -142,6 +146,9 @@ class SchoolClass(models.Model):
 
     class Meta:
         ordering = ["name"]
+        indexes = [
+            models.Index(fields=["school", "academic_year", "name"]),
+        ]
 
     def __str__(self):
         return self.name
@@ -162,6 +169,9 @@ class TimetableSlot(models.Model):
 
 class Course(models.Model):
     """A curriculum lesson (درس من المقرر) that can be taught, planned and tracked."""
+    organization = models.ForeignKey("Organization", on_delete=models.CASCADE, related_name="courses", null=True, blank=True)
+    school = models.ForeignKey("School", on_delete=models.CASCADE, related_name="courses", null=True, blank=True)
+    academic_year = models.ForeignKey("AcademicYear", on_delete=models.CASCADE, related_name="courses", null=True, blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="courses")
     title = models.CharField(max_length=160)
     domain = models.CharField(max_length=160, blank=True)
@@ -234,10 +244,22 @@ class TeacherProfile(models.Model):
                                              help_text="تخصيص أقسام دفتر المفتش PDF")
     cover_config = models.JSONField(default=dict, blank=True,
                                     help_text="تصميم غلاف دفتر المفتش (نفس بنية Cover الدفتر اليومي)")
+    # Role for portal access: teacher (workspace), parent (view children), student (view own data)
+    ROLE_CHOICES = [
+        ("teacher", "معلم"),
+        ("parent", "ولي أمر"),
+        ("student", "تلميذ"),
+    ]
+    role = models.CharField(max_length=20, default="teacher", choices=ROLE_CHOICES,
+                            help_text="دور المستخدم في بوابة المنصة")
+    linked_student = models.ForeignKey("Student", on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name="portal_users", help_text="التلميذ المرتبط ببوابة ولي الأمر أو التلميذ")
     updated_at = models.DateTimeField(auto_now=True)
 
 
 class Student(models.Model):
+    organization = models.ForeignKey("Organization", on_delete=models.CASCADE, related_name="students", null=True, blank=True)
+    school = models.ForeignKey("School", on_delete=models.CASCADE, related_name="students", null=True, blank=True)
     school_class = models.ForeignKey(SchoolClass, on_delete=models.CASCADE, related_name="students")
     full_name = models.CharField(max_length=160)
     birth_date = models.DateField(null=True, blank=True)
@@ -267,6 +289,108 @@ class Mark(models.Model):
         return round((self.continuous + self.supervised + self.exam * 2) / 4, 2)
 
 
+# ------------------------------------------------------------------ v2 grade calculation engine
+
+
+class GradeRuleSet(models.Model):
+    """Versioned calculation ruleset for grade aggregation.
+
+    Schools configure the approved formula per subject/grade/term context.
+    Never hardcode formulas in React components or scattered API views —
+    all calculation logic lives here and is versioned.
+    """
+    organization = models.ForeignKey("Organization", on_delete=models.CASCADE, related_name="grade_rulesets", null=True, blank=True)
+    school = models.ForeignKey("School", on_delete=models.CASCADE, related_name="grade_rulesets", null=True, blank=True)
+    name = models.CharField(max_length=160, help_text="e.g. المتوسط المستمر والفروض المحروسة - الثلاثي الأول")
+    subject = models.ForeignKey("Course", on_delete=models.SET_NULL, null=True, blank=True, related_name="grade_rulesets", help_text="مادة محددة، أو فارغ للتعميم على جميع المواد")
+    grade_level = models.CharField(max_length=80, blank=True, help_text="المستوى الدراسي، أو فارغ للتعميم")
+    academic_year = models.ForeignKey("AcademicYear", on_delete=models.CASCADE, related_name="grade_rulesets", null=True, blank=True)
+    term = models.PositiveSmallIntegerField(null=True, blank=True, choices=[(1, "الثلاثي الأول"), (2, "الثلاثي الثاني"), (3, "الثلاثي الثالث")], help_text="الثلاثي المستهدف، أو فارغ لجميع الفصول")
+    version = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    is_approved = models.BooleanField(default=False, help_text="يجب اعتماد القواعد من قبل مسؤول المدرسة قبل الاستخدام")
+    formula_config = models.JSONField(default=dict, help_text='{"component_weights": {"continuous": 0.3, "supervised": 0.3, "exam": 0.4}, "rounding": 2, "pass_threshold": 50}')
+    component_max = models.JSONField(default=dict, help_text='{"continuous": 20, "supervised": 20, "exam": 20}')
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_grade_rulesets")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-version", "name"]
+        unique_together = [("school", "name", "version")]
+        indexes = [
+            models.Index(fields=["school", "subject", "academic_year", "term", "is_active"]),
+            models.Index(fields=["effective_from", "effective_to"]),
+        ]
+
+    def __str__(self):
+        return f"{self.name} v{self.version}"
+
+
+class CalculatedResult(models.Model):
+    """Stored calculation result with full provenance for audit and reproducibility."""
+
+    student = models.ForeignKey("Student", on_delete=models.CASCADE, related_name="calculated_results")
+    school_class = models.ForeignKey("SchoolClass", on_delete=models.CASCADE, related_name="calculated_results")
+    subject = models.ForeignKey("Course", on_delete=models.CASCADE, related_name="calculated_results")
+    academic_year = models.ForeignKey("AcademicYear", on_delete=models.CASCADE, related_name="calculated_results")
+    term = models.PositiveSmallIntegerField()
+    ruleset = models.ForeignKey(GradeRuleSet, on_delete=models.CASCADE, related_name="calculated_results")
+    ruleset_version = models.PositiveIntegerField()
+    input_snapshot = models.JSONField(default=dict, help_text="نسخة من الدرجات المدخلة وقت الحساب")
+    calculated_value = models.FloatField(help_text="النتيجة المحسوبة النهائية")
+    calculated_percent = models.FloatField(null=True, blank=True, help_text="النسبة المئوية")
+    calculation_breakdown = models.JSONField(default=dict, help_text="تفاصيل الحساب لكل مكون")
+
+    # Submission / approval workflow
+    STATUS_CHOICES = [
+        ("calculated", "محسوب"),
+        ("submitted", "مقدم للمراجعة"),
+        ("approved", "معتمد من المراجع"),
+        ("rejected", "مرفوض"),
+        ("published", "منشور"),
+        ("voided", "ملغي"),
+    ]
+    status = models.CharField(max_length=20, default="calculated", choices=STATUS_CHOICES)
+    submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="submitted_results")
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="reviewed_results")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_comment = models.TextField(blank=True, help_text="تعليق المراجع أو سبب الرفض")
+
+    calculated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-calculated_at"]
+        unique_together = [("student", "subject", "academic_year", "term", "ruleset_version")]
+        indexes = [
+            models.Index(fields=["school_class", "subject", "term", "status"]),
+            models.Index(fields=["ruleset", "ruleset_version"]),
+            models.Index(fields=["status", "submitted_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.student.full_name} — {self.subject.title} — {self.calculated_value}"
+
+    def can_submit(self):
+        return self.status == "calculated"
+
+    def can_approve(self):
+        return self.status == "submitted"
+
+    def can_reject(self):
+        return self.status == "submitted"
+
+    def can_publish(self):
+        return self.status == "approved"
+
+    def can_void(self):
+        return self.status in ("published", "approved", "submitted", "calculated")
+
+
+# ------------------------------------------------------------------ attendance & follow-up
 # ------------------------------------------------------------------ attendance & follow-up
 class AttendanceRecord(models.Model):
     """One student's attendance state for one teaching day/session."""
@@ -712,6 +836,329 @@ class DocumentRevision(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+# ------------------------------------------------------------------ v2 multi-tenancy & academic foundation
+
+
+class Organization(models.Model):
+    """A school group, education organization, or customer account (tenant)."""
+    name = models.CharField(max_length=200)
+    code = models.SlugField(max_length=60, unique=True, help_text="Unique organization code.")
+    status = models.CharField(max_length=20, default="active")
+    locale = models.CharField(max_length=10, default="ar", help_text="Default UI language.")
+    time_zone = models.CharField(max_length=60, default="Africa/Algiers")
+    configuration = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "Organizations"
+
+    def __str__(self):
+        return self.name
+
+
+class School(models.Model):
+    """A specific school under an organization."""
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="schools")
+    name = models.CharField(max_length=200)
+    code = models.SlugField(max_length=60, help_text="Unique within the organization.")
+    logo = models.CharField(max_length=500, blank=True, help_text="Document/logo identity reference.")
+    address = models.CharField(max_length=255, blank=True)
+    contact_phone = models.CharField(max_length=40, blank=True)
+    contact_email = models.EmailField(blank=True)
+    status = models.CharField(max_length=20, default="active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        unique_together = [("organization", "code")]
+        verbose_name_plural = "Schools"
+
+    def __str__(self):
+        return self.name
+
+
+class Campus(models.Model):
+    """A physical site where classes or rooms may be located."""
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name="campuses")
+    name = models.CharField(max_length=200)
+    code = models.SlugField(max_length=60, help_text="Unique within the school.")
+    address = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=20, default="active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        unique_together = [("school", "code")]
+        verbose_name_plural = "Campuses"
+
+    def __str__(self):
+        return f"{self.school.name} — {self.name}"
+
+
+class AcademicYear(models.Model):
+    """A configurable academic period. Not assumed to match the Gregorian year."""
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="academic_years")
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name="academic_years")
+    name = models.CharField(max_length=80, help_text="e.g. 2026 / 2027")
+    start_date = models.DateField()
+    end_date = models.DateField()
+    status = models.CharField(max_length=20, default="planned", help_text="planned, active, closed, archived")
+    configuration_version = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-start_date", "name"]
+        unique_together = [("school", "name")]
+
+    def __str__(self):
+        return f"{self.school.name} — {self.name}"
+
+
+class AcademicTerm(models.Model):
+    """A term/semester within an academic year."""
+    academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, related_name="terms")
+    name = models.CharField(max_length=80, help_text="e.g. الثلاثي الأول / Term 1")
+    sequence = models.PositiveSmallIntegerField(default=1)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    status = models.CharField(max_length=20, default="planned")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["academic_year", "sequence"]
+        unique_together = [("academic_year", "sequence"), ("academic_year", "name")]
+
+    def __str__(self):
+        return f"{self.academic_year.name} — {self.name}"
+
+
+class Enrollment(models.Model):
+    """Effective-dated student placement in a class for an academic year.
+
+    A student may have historical enrollments across years but must not have
+    two active class placements in the same scope unless the school model
+    explicitly allows it.
+    """
+    student = models.ForeignKey("Student", on_delete=models.CASCADE, related_name="enrollments")
+    school = models.ForeignKey(School, on_delete=models.CASCADE, related_name="enrollments")
+    academic_year = models.ForeignKey(AcademicYear, on_delete=models.CASCADE, related_name="enrollments")
+    class_section = models.ForeignKey("SchoolClass", on_delete=models.CASCADE, related_name="enrollments")
+    campus = models.ForeignKey(Campus, on_delete=models.SET_NULL, null=True, blank=True, related_name="enrollments")
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20, default="active", help_text="active, completed, transferred, withdrawn")
+    source = models.CharField(max_length=80, blank=True, help_text="transfer/source metadata")
+    previous_placement = models.CharField(max_length=80, blank=True)
+    next_placement = models.CharField(max_length=80, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-start_date", "student__full_name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["student", "academic_year", "class_section"],
+                name="unique_student_year_class_enrollment",
+                condition=models.Q(status="active"),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["student", "status"]),
+            models.Index(fields=["academic_year", "class_section", "status"]),
+            models.Index(fields=["start_date", "end_date"]),
+        ]
+
+    def __str__(self):
+        return f"{self.student.full_name} → {self.class_section.name} ({self.academic_year.name})"
+
+
+# ------------------------------------------------------------------ v2 computer lab & seating planner
+
+
+class ComputerLab(models.Model):
+    """A computer lab room with seats and equipment."""
+
+    STATUS_CHOICES = [
+        ("active", "مفعل"),
+        ("closed", "مقفول"),
+        ("maintenance", "صيانة"),
+    ]
+
+    school = models.ForeignKey("School", on_delete=models.CASCADE, related_name="computer_labs")
+    campus = models.ForeignKey("Campus", on_delete=models.SET_NULL, null=True, blank=True, related_name="computer_labs")
+    name = models.CharField(max_length=160, help_text="مثال: مخبر الإعلام الآلي 1")
+    code = models.SlugField(max_length=60, help_text="كود فريد داخل المدرسة")
+    capacity = models.PositiveIntegerField(default=20, help_text="عدد المقاعد المتاحة")
+    room_number = models.CharField(max_length=40, blank=True, help_text="رقم الغرفة")
+    status = models.CharField(max_length=20, default="active", choices=STATUS_CHOICES)
+    computers_count = models.PositiveIntegerField(default=0, help_text="عدد أجهزة الكمبيوتر الفعلية")
+    operating_system = models.CharField(max_length=80, blank=True, help_text="نظام التشغيل المثبت")
+    software_list = models.JSONField(default=list, blank=True, help_text="قائمة البرامج المثبتة")
+    notes = models.TextField(blank=True, help_text="ملاحظات إضافية")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["school", "name"]
+        unique_together = [("school", "code")]
+        indexes = [
+            models.Index(fields=["school", "campus", "status"]),
+            models.Index(fields=["code"]),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.code}) — {self.school.name}"
+
+
+class Seat(models.Model):
+    """An individual seat within a computer lab."""
+
+    STATUS_CHOICES = [
+        ("available", "متوفر"),
+        ("occupied", "مشغول"),
+        ("maintenance", "صيانة"),
+        ("broken", "معطل"),
+    ]
+
+    lab = models.ForeignKey(ComputerLab, on_delete=models.CASCADE, related_name="seats")
+    seat_number = models.CharField(max_length=20, help_text="مثال: A1، B5")
+    row = models.CharField(max_length=10, blank=True, help_text="الصف، مثال: A")
+    column = models.PositiveIntegerField(default=1, help_text="العمود، مثال: 1")
+    status = models.CharField(max_length=20, default="available", choices=STATUS_CHOICES)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["lab", "row", "column"]
+        unique_together = [("lab", "seat_number")]
+        indexes = [
+            models.Index(fields=["lab", "status"]),
+            models.Index(fields=["lab", "row", "column"]),
+        ]
+
+    def __str__(self):
+        return f"{self.lab.name} — {self.seat_number}"
+
+
+class SeatingAssignment(models.Model):
+    """Assignment of a student to a specific seat in a lab for a term."""
+
+    student = models.ForeignKey("Student", on_delete=models.CASCADE, related_name="seating_assignments")
+    lab = models.ForeignKey(ComputerLab, on_delete=models.CASCADE, related_name="seating_assignments")
+    seat = models.ForeignKey(Seat, on_delete=models.CASCADE, related_name="assignments")
+    academic_year = models.ForeignKey("AcademicYear", on_delete=models.CASCADE, related_name="seating_assignments")
+    term = models.PositiveSmallIntegerField(choices=[(1, "الثلاثي الأول"), (2, "الثلاثي الثاني"), (3, "الثلاثي الثالث")])
+    assigned_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="seating_assignments_created")
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-assigned_at"]
+        unique_together = [
+            ("lab", "seat", "academic_year", "term"),
+            ("student", "lab", "academic_year", "term"),
+        ]
+        indexes = [
+            models.Index(fields=["student", "academic_year", "term"]),
+            models.Index(fields=["lab", "academic_year", "term"]),
+        ]
+
+    def __str__(self):
+        return f"{self.student.full_name} → {self.seat.seat_number} ({self.lab.name}, {self.get_term_display()})"
+
+
+# ------------------------------------------------------------------ v2 security center & audit log
+
+
+class SecurityAuditLog(models.Model):
+    """Immutable audit trail of security-relevant actions in the workspace.
+
+    Records who did what, when, and from where — for accountability,
+    incident investigation, and compliance review. Entries are append-only
+    and never edited or deleted through normal UI paths.
+    """
+
+    ACTION_CHOICES = [
+        ("login", "تسجيل دخول"),
+        ("logout", "تسجيل خروج"),
+        ("create", "إنشاء"),
+        ("update", "تعديل"),
+        ("delete", "حذف"),
+        ("export", "تصدير"),
+        ("import", "استيراد"),
+        ("view", "عرض"),
+        ("approve", "اعتماد"),
+        ("reject", "رفض"),
+        ("publish", "نشر"),
+        ("void", "إلغاء"),
+        ("submit", "إرسال"),
+        ("failed_login", "فشل تسجيل دخول"),
+        ("access_denied", "رفض وصول"),
+        ("data_change", "تغيير بيانات"),
+        ("system_event", "حدث نظام"),
+    ]
+
+    RESOURCE_CHOICES = [
+        ("user", "مستخدم"),
+        ("student", "تلميذ"),
+        ("class", "فوج"),
+        ("course", "مقرر"),
+        ("lesson-plan", "خطة درس"),
+        ("session", "حصص"),
+        ("grade-ruleset", "مجموعة قواعد حساب"),
+        ("calculated-result", "نتيجة حساب"),
+        ("computer-lab", "مختبر كمبيوتر"),
+        ("seat", "مقعد"),
+        ("seating-assignment", "تكليف مقعد"),
+        ("organization", "منظمة"),
+        ("school", "مدرسة"),
+        ("campus", "حرم"),
+        ("academic-year", "سنة دراسية"),
+        ("academic-term", "ثلاثي"),
+        ("enrollment", "تسجيل"),
+        ("document", "وثيقة"),
+        ("backup", "نسخة احتياطية"),
+        ("system", "نظام"),
+    ]
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="audit_logs")
+    action = models.CharField(max_length=30, choices=ACTION_CHOICES)
+    resource_type = models.CharField(max_length=40, choices=RESOURCE_CHOICES, blank=True)
+    resource_id = models.PositiveIntegerField(null=True, blank=True)
+    resource_label = models.CharField(max_length=200, blank=True, help_text="وصف مورد قابل للقراءة من قبل الإنسان")
+    details = models.JSONField(default=dict, blank=True, help_text="تفاصيل إضافية عن العملية")
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "created_at"]),
+            models.Index(fields=["action", "created_at"]),
+            models.Index(fields=["resource_type", "resource_id"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        user_name = self.user.username if self.user else "النظام"
+        return f"{user_name} — {self.get_action_display()} — {self.created_at:%Y-%m-%d %H:%M}"
+
+    def save(self, *args, **kwargs):
+        # Audit logs are append-only: prevent updates through the ORM
+        if self.pk is not None:
+            raise ValueError("سجلات التدقيق غير قابلة للتعديل بعد الإنشاء")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        # Prevent deletion through normal UI paths
+        raise ValueError("سجلات التدقيق غير قابلة للحذف")
 
 
 # ------------------------------------------------------------------ question bank

@@ -95,16 +95,20 @@ ENTRIES = [
 
 
 class Command(BaseCommand):
-    help = "Seed demo teacher + realistic demo content."
+    help = "Seed synthetic demo content without assigning a demo password."
 
     def handle(self, *args, **opts):
         call_command("generate_themes")
-        teacher, _ = User.objects.get_or_create(
+        teacher, created = User.objects.get_or_create(
             username="teacher", defaults={"first_name": "سمير", "last_name": "حداد",
                                           "email": "teacher@example.dz"})
-        teacher.set_password("demo1234")
+        if created:
+            # Demo seeding never creates a publicly guessable login. Provision
+            # the password separately through the private management command.
+            teacher.set_unusable_password()
+            teacher.save(update_fields=["password"])
         teacher.first_name, teacher.last_name = "سمير", "حداد"
-        teacher.save()
+        teacher.save(update_fields=["first_name", "last_name"])
 
         def theme(slug, fallback=0):
             return Theme.objects.filter(slug=slug).first() or Theme.objects.all()[fallback]

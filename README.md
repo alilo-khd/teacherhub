@@ -1,8 +1,9 @@
 # منصة الأستاذ — TeacherHub
 
-Full-stack teacher workspace: **Django 5 + DRF** API, **React 18 + Vite + Bootstrap 5 (RTL)** UI,
-SQLite persistence. Built around a **theme library**: curated + auto-generated visual
-identities you can apply to your **daily journal, lesson plans, note books**, and more.
+Full-stack teacher workspace: **Django 5 + DRF** API, **React 18 + Vite + Bootstrap 5** UI,
+with an isolated SQLite development path and a Render + Neon production target. The approved
+MVP centers on **Today → Plan → Teach → Review**: daily agenda, weekly planning, recorded
+sessions, and class/curriculum progress. Existing specialist workflows remain preserved.
 
 ## Quick start (local)
 
@@ -10,9 +11,15 @@ identities you can apply to your **daily journal, lesson plans, note books**, an
 # 1) backend
 cd backend
 pip install -r requirements.txt
+# Keep this development run on a temporary SQLite sandbox; do not point it at a production database.
+export DATABASE_URL='sqlite:////tmp/teacherhub-development.sqlite3'
+export DJANGO_DEBUG=1
+export DJANGO_SECRET_KEY='dev-only-teacherhub-local-key-change-me'
+export DJANGO_ALLOWED_HOSTS='localhost,127.0.0.1'
 python manage.py migrate
 python manage.py generate_themes     # 12 curated + 48 auto-generated themes
-python manage.py seed_demo           # realistic demo content
+python manage.py seed_demo           # synthetic/demo content for local use only
+python manage.py provision_teacher   # hidden interactive prompt; no password in the command
 python manage.py runserver           # http://127.0.0.1:8000
 
 # 2) frontend (new terminal)
@@ -23,14 +30,42 @@ npm run dev                          # http://127.0.0.1:5173  (proxies /api → 
 
 Or simply: `bash run.sh` from the project root.
 
-**No sign-in:** the app runs in local single-user mode — it opens straight into the
-workspace (seeded with 3 journals, 9 real informatics lesson plans, 2 note books
-with entries, 60+ themes). All data belongs to one local teacher profile.
+**Private single-teacher account:** there is no public registration or demo password.
+After seeding local demo content, run `python manage.py provision_teacher` to create/reset
+the local account through a hidden interactive password prompt. The `run.sh` helper uses
+a temporary SQLite database under `/tmp`; keep development and demo data separate from Neon.
+
+## Automated browser smoke test (local only)
+
+From the project root, run `python3 scripts/e2e_teacherhub.py` with the backend
+requirements, frontend dependencies, Python Playwright, and Chromium installed. If needed,
+install the browser tooling in your development environment:
+
+```bash
+python3 -m pip install playwright
+python3 -m playwright install chromium
+```
+
+The runner starts Django and Vite on temporary local ports, creates a fresh SQLite database
+under a temporary directory, and adds only a synthetic teacher, class, curriculum lesson,
+and timetable slot. It verifies Django resolves to that exact disposable file before running
+migrations. It exercises **Today → Plan → Teach → Review**, then deletes the whole sandbox
+on exit. It never uses the bundled snapshot/demo seeder or a production database.
+The core flow checks 390/768/1024/1440px viewport fit. The runner opens all **37 visible
+sidebar routes** without activating page write actions; this includes explicit checks for
+Courses, Classes, Sessions, Lesson Plans, Notebooks, Themes, Calendar, Question Bank,
+Gradebook, and Backup. Route landmarks/headings, browser errors, and horizontal fit are
+checked at 320, 360, 390, 412, 768, 820, 1024, 1280, and 1440px, with a guard against
+non-GET API requests during the route sweep. Arabic RTL and English/French LTR, labelled
+controls, keyboard focus and checkpoint toggling, the mobile drawer, and Review progress
+are also covered. This is a targeted smoke suite—not a full WCAG audit or functional test
+of every secondary workflow; parameterized detail/editor/preview routes are not in the
+37-route sidebar sweep.
 
 ## Features
 
-- **Local single-user mode** — authentication removed entirely; open and use.
-- **Dashboard** — stat cards, recent journals & lesson plans, latest note entries, spotlight theme.
+- **Private single-teacher access** — Django sessions + CSRF; no public sign-up or demo login.
+- **Today dashboard** — daily schedule, next curriculum lesson, class progress, and quick teaching actions.
 - **Theme library** — search + style/source filters, palette swatches, usage counters,
   *“✨ توليد سمات جديدة آليًا”* button (same generator as the CLI script), theme preview
   on a sample lesson plan, and **apply-to…** flow targeting any journal/plan/notebook.
@@ -64,13 +99,11 @@ The home page is a **Teaching Studio** built around one loop: *teach → log →
 
 ## Languages (العربية / English / Français)
 
-The whole interface is trilingual. Use the **العربية | English | Français**
-switch at the bottom of the sidebar; the choice is remembered
-(`localStorage`) and flips the layout direction (RTL for Arabic, LTR for
-English/French). The default UI language is **English**. Only interface
-chrome is translated — your lesson titles, student names, key points and
-other content stay exactly as you wrote them (Arabic included), and the
-printed PDF documents remain Arabic, as official school documents should.
+The interface supports Arabic, English, and French. Choose a language from the
+workspace header or the sign-in screen; the choice is remembered (`localStorage`)
+and sets RTL for Arabic or LTR for English/French. The default UI language is
+**Arabic**. Only interface chrome is translated — lesson titles, student names,
+key points, and other user content remain as entered.
 
 ## Filters, sorting & print control
 
@@ -530,3 +563,15 @@ The app runs as **one Docker web service** (Django + gunicorn serving the built 
 - `backend/config/settings.py` reads `DATABASE_URL`, `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS` from the environment; locally, a repo-root `.env.local` (written by `neon init`, never committed) supplies them. SQLite is a local development fallback only; production refuses to start without `DATABASE_URL` so a rebuild cannot silently switch to disposable storage.
 - `Dockerfile` (repo root) builds the frontend (`--base=/static/`), installs WeasyPrint's system libraries and Arabic fonts, runs migrations, conditionally seeds, then starts `collectstatic && gunicorn`. Set Render's `DATABASE_URL` to the Neon **direct** (unpooled) connection for the intended project/branch/database.
 - `backend/hub/fixtures/teacherhub_snapshot.json` bundles the 428-object data snapshot (3 classes, 54 students, 162 marks, 9 documents, 60 bank questions, 74 themes, 11 lessons, 9 lesson plans, 3 journals). `seed_if_empty` restores it only when no non-theme hub data exists. It preserves existing themes, matches them by slug and remaps fixture references; it skips entirely when other app data is already present. The snapshot contains real student information: keep the GitHub repo private.
+
+## Private teacher authentication (modernization branch)
+
+The account model is one teacher with private access. The local anonymous-user behavior has been replaced in the modernization branch with:
+
+- Django server-side sessions; private API routes require the configured teacher account. `GET /api/auth/me/` reports only whether that account is signed in and never creates an account.
+- Same-origin CSRF protection on login and every state-changing request. The React client obtains a CSRF cookie and sends the matching header; the permissive development CORS middleware was removed because Vite proxies `/api` and the production app is same-origin.
+- No public registration, demo login, token-based login, email reset, or default password. Login attempts use a shared database-backed cache in production (initialized by the Docker startup command) rather than a per-worker memory cache; the cache key HMAC-pseudonymizes the client IP. Local debug uses in-memory cache. DRF throttling is approximate, so add host-level rate limiting if the service is exposed publicly at larger scale. Session and CSRF cookies are secure as appropriate (the CSRF token remains readable by the same-origin client; the session cookie is HTTP-only).
+- To privately create the single `teacher` account or reset its password, run `python manage.py provision_teacher` in a controlled shell for the intended database. It prompts for the password twice without echoing it, validates it against the configured password rules, and creates a non-admin account. Never put the password in a command-line argument or repository file.
+- A fresh demo seed creates only an unusable-password owner record; it does not grant a guessable demo login. The provisioning command has **not** been run against Render or the existing Neon database. No deployment, account reset, database reset, or cutover is authorized by this change.
+
+The local verification database is synthetic SQLite only. Current checks on the modernization branch: **99 backend tests pass**; the frontend production build passes at 412.26 kB (137.56 kB gzip). The repeatable browser harness in `scripts/e2e_teacherhub.py` verifies the synthetic Plan → Teach → Review loop and the targeted device/accessibility matrix described above. Review `MODERNIZATION_PLAN.md` for scope, risks, and the current verification boundary.

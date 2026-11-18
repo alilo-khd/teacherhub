@@ -3,7 +3,11 @@ from rest_framework import serializers
 from .models import (Theme, Journal, LessonPlan, NoteBook, NoteEntry,
                      SchoolClass, TimetableSlot, Course, Session, WEEKDAY_NAMES,
                      TeacherProfile, Student, Mark, Holiday, Seminar,
-                     Institution, Visit, Observation, CustomDocument, DocumentRevision, QuestionBankItem, AttendanceRecord, StudentFollowUpRecord, SupportPlan, ParentCommunication, Assignment, AssignmentSubmission, TeacherTask, Meeting, ParentMeetingDay, ParentAppointment, SupportGroup, Assessment, AssessmentResult)
+                     Institution, Visit, Observation, CustomDocument, DocumentRevision, QuestionBankItem, AttendanceRecord, StudentFollowUpRecord, SupportPlan, ParentCommunication, Assignment, AssignmentSubmission, TeacherTask, Meeting, ParentMeetingDay, ParentAppointment, SupportGroup, Assessment, AssessmentResult,
+                     Organization, School, Campus, AcademicYear, AcademicTerm, Enrollment,
+                     GradeRuleSet, CalculatedResult,
+                     ComputerLab, Seat, SeatingAssignment,
+                     SecurityAuditLog)
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -96,13 +100,175 @@ class NoteEntrySerializer(serializers.ModelSerializer):
 # ------------------------------------------------------------------ studio
 class TimetableSlotSerializer(serializers.ModelSerializer):
     weekday_name = serializers.SerializerMethodField()
+    conflict_warning = serializers.SerializerMethodField()
 
     class Meta:
         model = TimetableSlot
-        fields = ["id", "school_class", "weekday", "weekday_name", "start_time", "end_time", "room"]
+        fields = ["id", "school_class", "weekday", "weekday_name", "start_time", "end_time", "room", "conflict_warning"]
+        read_only_fields = ["conflict_warning"]
 
     def get_weekday_name(self, obj):
         return WEEKDAY_NAMES[obj.weekday] if 0 <= obj.weekday < 7 else ""
+
+    def get_conflict_warning(self, obj):
+        """Return a human-readable conflict description, or None if no conflict."""
+        conflicts = self._find_conflicts(obj)
+        if not conflicts:
+            return None
+        messages = []
+        for c in conflicts:
+            if c["type"] == "class":
+                messages.append(
+                    f"تضارب مع حصة فصل '{c['other_class']}' في نفس الوقت ({c['other_weekday_name']} {c['other_start']}-{c['other_end']})"
+                )
+            elif c["type"] == "room":
+                messages.append(
+                    f"تضارب مع حصة في الغرفة '{c['other_room']}' في نفس الوقت ({c['other_weekday_name']} {c['other_start']}-{c['other_end']})"
+                )
+        return "; ".join(messages)
+
+    def _to_time(self, value):
+        """Convert a time value (string or datetime.time) to datetime.time."""
+        import datetime
+        if isinstance(value, datetime.time):
+            return value
+        if isinstance(value, str):
+            return datetime.datetime.strptime(value, "%H:%M").time()
+        return value
+
+    def _slot_end(self, slot):
+        """Return end time, defaulting to start + 45 minutes if end_time is null."""
+        import datetime
+        if slot.end_time:
+            return self._to_time(slot.end_time)
+        start_dt = datetime.datetime.combine(datetime.date.today(), self._to_time(slot.start_time))
+        return (start_dt + datetime.timedelta(minutes=45)).time()
+
+    def _times_overlap(self, a_start, a_end, b_start, b_end):
+        a_start = self._to_time(a_start)
+        a_end = self._to_time(a_end)
+        b_start = self._to_time(b_start)
+        b_end = self._to_time(b_end)
+        return a_start < b_end and b_start < a_end
+
+    def _find_conflicts(self, slot):
+        """Find conflicting timetable slots for the given slot (excluding itself)."""
+        from .models import TimetableSlot
+        qs = TimetableSlot.objects.filter(
+            school_class=slot.school_class,
+            weekday=slot.weekday,
+        ).exclude(pk=slot.pk)
+
+        my_end = self._slot_end(slot)
+        conflicts = []
+
+        # Class conflicts: same class, same weekday, overlapping time
+        for other in qs:
+            other_end = self._slot_end(other)
+            if self._times_overlap(slot.start_time, my_end, other.start_time, other_end):
+                other_start_t = self._to_time(other.start_time)
+                other_end_t = self._to_time(other_end)
+                conflicts.append({
+                    "type": "class",
+                    "other_class": str(other.school_class),
+                    "other_weekday_name": WEEKDAY_NAMES[other.weekday] if 0 <= other.weekday < 7 else "",
+                    "other_start": other_start_t.strftime("%H:%M"),
+                    "other_end": other_end_t.strftime("%H:%M"),
+                })
+
+        # Room conflicts: same room, same weekday, overlapping time (only if room is set)
+        if slot.room and slot.room.strip():
+            qs_room = TimetableSlot.objects.filter(
+                room=slot.room,
+                weekday=slot.weekday,
+            ).exclude(pk=slot.pk)
+            for other in qs_room:
+                other_end = self._slot_end(other)
+                if self._times_overlap(slot.start_time, my_end, other.start_time, other_end):
+                    other_start_t = self._to_time(other.start_time)
+                    other_end_t = self._to_time(other_end)
+                    conflicts.append({
+                        "type": "room",
+                        "other_room": other.room,
+                        "other_weekday_name": WEEKDAY_NAMES[other.weekday] if 0 <= other.weekday < 7 else "",
+                        "other_start": other_start_t.strftime("%H:%M"),
+                        "other_end": other_end_t.strftime("%H:%M"),
+                    })
+
+        return conflicts
+
+    def validate(self, attrs):
+        """Fail closed: reject creates/updates that produce a timetable conflict."""
+        instance = getattr(self, "instance", None)
+
+        school_class = attrs.get("school_class", getattr(instance, "school_class", None))
+        weekday = attrs.get("weekday", getattr(instance, "weekday", None))
+        start_time = attrs.get("start_time", getattr(instance, "start_time", None))
+        end_time = attrs.get("end_time", getattr(instance, "end_time", None))
+        room = attrs.get("room", getattr(instance, "room", None)) or ""
+
+        if not all([school_class, weekday is not None, start_time]):
+            return attrs
+
+        import datetime
+        # DRF passes time fields as strings from JSON; convert to time objects
+        if isinstance(start_time, str):
+            start_time = datetime.datetime.strptime(start_time, "%H:%M").time()
+        if end_time and isinstance(end_time, str):
+            end_time = datetime.datetime.strptime(end_time, "%H:%M").time()
+
+        my_end = end_time
+        if not my_end:
+            start_dt = datetime.datetime.combine(datetime.date.today(), start_time)
+            my_end = (start_dt + datetime.timedelta(minutes=45)).time()
+
+        from .models import TimetableSlot
+
+        # Class conflict check
+        qs = TimetableSlot.objects.filter(
+            school_class=school_class,
+            weekday=weekday,
+        ).exclude(pk=instance.pk if instance else None)
+
+        for other in qs:
+            other_end = other.end_time
+            if not other_end:
+                start_dt = datetime.datetime.combine(datetime.date.today(), other.start_time)
+                other_end = (start_dt + datetime.timedelta(minutes=45)).time()
+            if start_time < other_end and other.start_time < my_end:
+                raise serializers.ValidationError(
+                    {
+                        "non_field_errors": [
+                            f"تضارب في التوقيت مع حصة فصل '{other.school_class.name}' "
+                            f"({WEEKDAY_NAMES[other.weekday]} {other.start_time.strftime('%H:%M')}-"
+                            f"{other_end.strftime('%H:%M')}). لا يمكن لنفس الفصل أن يكون في مكانين في نفس الوقت."
+                        ]
+                    }
+                )
+
+        # Room conflict check
+        if room and room.strip():
+            qs_room = TimetableSlot.objects.filter(
+                room=room,
+                weekday=weekday,
+            ).exclude(pk=instance.pk if instance else None)
+            for other in qs_room:
+                other_end = other.end_time
+                if not other_end:
+                    start_dt = datetime.datetime.combine(datetime.date.today(), other.start_time)
+                    other_end = (start_dt + datetime.timedelta(minutes=45)).time()
+                if start_time < other_end and other.start_time < my_end:
+                    raise serializers.ValidationError(
+                        {
+                            "non_field_errors": [
+                                f"تضارب في الغرفة '{room}' مع حصة '{other.school_class.name}' "
+                                f"({WEEKDAY_NAMES[other.weekday]} {other.start_time.strftime('%H:%M')}-"
+                                f"{other_end.strftime('%H:%M')}). الغرفة محجوزة بالفعل في هذا التوقيت."
+                            ]
+                        }
+                    )
+
+        return attrs
 
 
 def class_progress(school_class, courses=None):
@@ -689,3 +855,195 @@ class AssessmentSerializer(serializers.ModelSerializer):
         if value < 1 or value > 600:
             raise serializers.ValidationError("المدة يجب أن تكون بين 1 و600 دقيقة.")
         return value
+
+
+# ------------------------------------------------------------------ v2 multi-tenancy & academic foundation serializers
+
+
+class OrganizationSerializer(serializers.ModelSerializer):
+    school_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Organization
+        fields = ["id", "name", "code", "status", "locale", "time_zone",
+                  "configuration", "school_count", "created_at", "updated_at"]
+        read_only_fields = ["code", "created_at", "updated_at"]
+
+    def get_school_count(self, obj):
+        return obj.schools.count()
+
+
+class SchoolSerializer(serializers.ModelSerializer):
+    organization_detail = OrganizationSerializer(source="organization", read_only=True)
+    class_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = School
+        fields = ["id", "organization", "organization_detail", "name", "code",
+                  "logo", "address", "contact_phone", "contact_email", "status",
+                  "class_count", "created_at", "updated_at"]
+        read_only_fields = ["code", "created_at", "updated_at"]
+
+    def get_class_count(self, obj):
+        return obj.classes.count()
+
+
+class CampusSerializer(serializers.ModelSerializer):
+    school_detail = SchoolSerializer(source="school", read_only=True)
+
+    class Meta:
+        model = Campus
+        fields = ["id", "school", "school_detail", "name", "code",
+                  "address", "status", "created_at", "updated_at"]
+        read_only_fields = ["code", "created_at", "updated_at"]
+
+
+class AcademicYearSerializer(serializers.ModelSerializer):
+    school_detail = SchoolSerializer(source="school", read_only=True)
+    term_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AcademicYear
+        fields = ["id", "organization", "school", "school_detail", "name",
+                  "start_date", "end_date", "status", "configuration_version",
+                  "term_count", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
+
+    def get_term_count(self, obj):
+        return obj.terms.count()
+
+
+class AcademicTermSerializer(serializers.ModelSerializer):
+    academic_year_detail = AcademicYearSerializer(source="academic_year", read_only=True)
+
+    class Meta:
+        model = AcademicTerm
+        fields = ["id", "academic_year", "academic_year_detail", "name", "sequence",
+                  "start_date", "end_date", "status", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
+
+
+class EnrollmentSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source="student.full_name", read_only=True)
+    class_name = serializers.CharField(source="class_section.name", read_only=True)
+    academic_year_name = serializers.CharField(source="academic_year.name", read_only=True)
+
+    class Meta:
+        model = Enrollment
+        fields = ["id", "student", "student_name", "school", "academic_year",
+                  "academic_year_name", "class_section", "class_name", "campus",
+                  "start_date", "end_date", "status", "source",
+                  "previous_placement", "next_placement",
+                  "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
+
+
+# ------------------------------------------------------------------ v2 computer lab & seating planner serializers
+
+
+class ComputerLabSerializer(serializers.ModelSerializer):
+    school_name = serializers.CharField(source="school.name", read_only=True)
+    campus_name = serializers.CharField(source="campus.name", read_only=True)
+    seat_count = serializers.SerializerMethodField()
+    available_seats = serializers.SerializerMethodField()
+    occupied_seats = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ComputerLab
+        fields = ["id", "school", "school_name", "campus", "campus_name", "name", "code",
+                  "capacity", "room_number", "status", "computers_count", "operating_system",
+                  "software_list", "notes", "seat_count", "available_seats", "occupied_seats",
+                  "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at"]
+
+    def get_seat_count(self, obj):
+        return obj.seats.count()
+
+    def get_available_seats(self, obj):
+        return obj.seats.filter(status="available").count()
+
+    def get_occupied_seats(self, obj):
+        return obj.seats.filter(status="occupied").count()
+
+
+class SeatSerializer(serializers.ModelSerializer):
+    lab_name = serializers.CharField(source="lab.name", read_only=True)
+    lab_code = serializers.CharField(source="lab.code", read_only=True)
+    assignment_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Seat
+        fields = ["id", "lab", "lab_name", "lab_code", "seat_number", "row", "column",
+                  "status", "notes", "assignment_count"]
+        read_only_fields = []
+
+    def get_assignment_count(self, obj):
+        return obj.assignments.count()
+
+
+class SeatingAssignmentSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source="student.full_name", read_only=True)
+    lab_name = serializers.CharField(source="lab.name", read_only=True)
+    seat_number = serializers.CharField(source="seat.seat_number", read_only=True)
+    academic_year_name = serializers.CharField(source="academic_year.name", read_only=True)
+    assigned_by_name = serializers.CharField(source="assigned_by.username", read_only=True)
+
+    class Meta:
+        model = SeatingAssignment
+        fields = ["id", "student", "student_name", "lab", "lab_name", "seat", "seat_number",
+                  "academic_year", "academic_year_name", "term", "assigned_by",
+                  "assigned_by_name", "assigned_at"]
+        read_only_fields = ["assigned_by", "assigned_at"]
+
+
+# ------------------------------------------------------------------ v2 security center & audit log serializers
+
+
+class SecurityAuditLogSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source="user.username", read_only=True)
+
+    class Meta:
+        model = SecurityAuditLog
+        fields = ["id", "user", "user_name", "action", "resource_type",
+                  "resource_id", "resource_label", "details", "ip_address",
+                  "user_agent", "created_at"]
+        read_only_fields = ["created_at"]
+
+
+# ------------------------------------------------------------------ v2 grade calculation engine serializers
+
+
+class GradeRuleSetSerializer(serializers.ModelSerializer):
+    subject_title = serializers.CharField(source="subject.title", read_only=True)
+    school_name = serializers.CharField(source="school.name", read_only=True)
+    academic_year_name = serializers.CharField(source="academic_year.name", read_only=True)
+
+    class Meta:
+        model = GradeRuleSet
+        fields = ["id", "organization", "school", "school_name", "name", "subject",
+                  "subject_title", "grade_level", "academic_year", "academic_year_name",
+                  "term", "version", "is_active", "is_approved",
+                  "formula_config", "component_max", "effective_from", "effective_to",
+                  "created_by", "created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "version"]
+
+
+class CalculatedResultSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source="student.full_name", read_only=True)
+    class_name = serializers.CharField(source="school_class.name", read_only=True)
+    subject_title = serializers.CharField(source="subject.title", read_only=True)
+    ruleset_name = serializers.CharField(source="ruleset.name", read_only=True)
+    submitted_by_name = serializers.CharField(source="submitted_by.username", read_only=True)
+    reviewed_by_name = serializers.CharField(source="reviewed_by.username", read_only=True)
+
+    class Meta:
+        model = CalculatedResult
+        fields = ["id", "student", "student_name", "school_class", "class_name",
+                  "subject", "subject_title", "academic_year", "term",
+                  "ruleset", "ruleset_name", "ruleset_version",
+                  "input_snapshot", "calculated_value", "calculated_percent",
+                  "calculation_breakdown", "status", "submitted_by",
+                  "submitted_by_name", "submitted_at", "reviewed_by",
+                  "reviewed_by_name", "reviewed_at", "review_comment",
+                  "calculated_at"]
+        read_only_fields = ["calculated_at", "ruleset_version", "submitted_by", "submitted_at", "reviewed_by", "reviewed_at"]

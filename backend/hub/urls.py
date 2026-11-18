@@ -32,8 +32,25 @@ router.register("parent-meeting-days", views.ParentMeetingDayViewSet, basename="
 router.register("support-groups", views.SupportGroupViewSet, basename="support-groups")
 router.register("tasks", views.TeacherTaskViewSet, basename="tasks")
 router.register("assessments", views.AssessmentViewSet, basename="assessments")
+router.register("organizations", views.OrganizationViewSet, basename="organizations")
+router.register("schools", views.SchoolViewSet, basename="schools")
+router.register("campuses", views.CampusViewSet, basename="campuses")
+router.register("academic-years", views.AcademicYearViewSet, basename="academic-years")
+router.register("academic-terms", views.AcademicTermViewSet, basename="academic-terms")
+router.register("enrollments", views.EnrollmentViewSet, basename="enrollments")
+router.register("computer-labs", views.ComputerLabViewSet, basename="computer-labs")
+router.register("seats", views.SeatViewSet, basename="seats")
+router.register("seating-assignments", views.SeatingAssignmentViewSet, basename="seating-assignments")
+router.register("security-audit-logs", views.SecurityAuditLogViewSet, basename="security-audit-logs")
+router.register("parent-portal", views.ParentPortalViewSet, basename="parent-portal")
+router.register("student-portal", views.StudentPortalViewSet, basename="student-portal")
+router.register("grade-rule-sets", views.GradeRuleSetViewSet, basename="grade-rule-sets")
+router.register("calculated-results", views.CalculatedResultViewSet, basename="calculated-results")
 
 urlpatterns = [
+    path("auth/csrf/", views.CSRFTokenView.as_view()),
+    path("auth/login/", views.LoginView.as_view()),
+    path("auth/logout/", views.LogoutView.as_view()),
     path("auth/me/", views.me),
     path("profile/", views.TeacherProfileView.as_view()),
     path("dashboard/", views.DashboardView.as_view()),
@@ -52,6 +69,7 @@ urlpatterns = [
     path("backup/info/", views.BackupInfoView.as_view()),
     path("backup/export/", views.BackupExportView.as_view()),
     path("backup/import/", views.BackupImportView.as_view()),
+    path("backup/verify/", views.BackupVerifyView.as_view()),
     path("backup/rollover/", views.SchoolYearRolloverView.as_view()),
     path("classes/<int:pk>/progression/", views.ProgressionView.as_view()),
     path("classes/<int:pk>/progression/generate-document/", views.ProgressionDocumentView.as_view()),

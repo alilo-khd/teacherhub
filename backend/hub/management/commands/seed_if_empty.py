@@ -11,11 +11,12 @@ import tempfile
 from pathlib import Path
 
 from django.apps import apps
+from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
 
 from hub.models import Theme
-from hub.views import local_user
 
 
 FIXTURE_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "teacherhub_snapshot.json"
@@ -51,9 +52,16 @@ class Command(BaseCommand):
         rows = self._merge_existing_themes(rows)
 
         # The snapshot uses the natural key "teacher" for ownership but does
-        # not ship auth.User rows. Make sure that natural key resolves even if
-        # the app has already created its local teacher account.
-        local_user()
+        # not ship auth.User rows. Create only an unloginable owner record here;
+        # a password is set later through the private provision_teacher command.
+        User = get_user_model()
+        teacher, created = User.objects.get_or_create(
+            username=settings.TEACHER_USERNAME,
+            defaults={"first_name": "سمير", "last_name": "حداد", "email": "teacher@example.dz"},
+        )
+        if created:
+            teacher.set_unusable_password()
+            teacher.save(update_fields=["password"])
 
         # loaddata provides one transaction and FK checks. Use a temporary JSON
         # file because the adjusted fixture may omit/remap pre-existing themes.

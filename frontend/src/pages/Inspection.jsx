@@ -100,7 +100,7 @@ export default function InspectionPage() {
         </button>
       </div>
 
-      <div className="btn-group mb-4" role="group">
+      <div className="btn-group inspection-tabs mb-4" role="group" aria-label={t("التفتيش والمتابعة")}>
         {[["institutions", "", "المؤسسات"], ["visits", "", "الزيارات"], ["observations", "", "شبكات الملاحظة"]].map(([k, ic, l]) => (
           <button key={k} className={`btn ${tab === k ? "btn-dark" : "btn-outline-dark"}`} onClick={() => setTab(k)}>{ic} {t(l)}</button>
         ))}

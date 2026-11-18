@@ -1,24 +1,39 @@
-from django.contrib.auth import authenticate
+from django.conf import settings
+from django.contrib.auth import authenticate, login as auth_login, logout as auth_logout
 from django.contrib.auth.models import User
+from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.db.models import Q
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
 from rest_framework import viewsets, status
-from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from .throttling import PrivateTeacherLoginThrottle
+from .grade_calculation import calculate_and_save_results, preview_calculation
+from .permissions import IsParentAccount, IsStudentAccount, IsPortalAccount
 
 from .models import (Theme, Journal, LessonPlan, NoteBook, NoteEntry,
                      SchoolClass, TimetableSlot, Course, Session, WEEKDAY_NAMES,
                      TeacherProfile, Student, Mark, Holiday, Seminar,
-                     Institution, Visit, Observation, CustomDocument, DocumentRevision, QuestionBankItem, AttendanceRecord, StudentFollowUpRecord, SupportPlan, ParentCommunication, Assignment, AssignmentSubmission, TeacherTask, Meeting, ParentMeetingDay, ParentAppointment, SupportGroup, Assessment, AssessmentResult)
+                     Institution, Visit, Observation, CustomDocument, DocumentRevision, QuestionBankItem, AttendanceRecord, StudentFollowUpRecord, SupportPlan, ParentCommunication, Assignment, AssignmentSubmission, TeacherTask, Meeting, ParentMeetingDay, ParentAppointment, SupportGroup, Assessment, AssessmentResult,
+                     Organization, School, Campus, AcademicYear, AcademicTerm, Enrollment,
+                     GradeRuleSet, CalculatedResult,
+                     ComputerLab, Seat, SeatingAssignment,
+                     SecurityAuditLog)
 from .serializers import (ThemeSerializer, JournalSerializer, LessonPlanSerializer,
                           NoteBookSerializer, NoteEntrySerializer, UserSerializer,
                           SchoolClassSerializer, TimetableSlotSerializer,
                           CourseSerializer, SessionSerializer, class_progress,
                           TeacherProfileSerializer, StudentSerializer, MarkSerializer,
+                          OrganizationSerializer, SchoolSerializer, CampusSerializer,
+                          AcademicYearSerializer, AcademicTermSerializer, EnrollmentSerializer,
+                          ComputerLabSerializer, SeatSerializer, SeatingAssignmentSerializer,
+                          SecurityAuditLogSerializer,
+                          GradeRuleSetSerializer, CalculatedResultSerializer,
                           HolidaySerializer, SeminarSerializer, InstitutionSerializer,
                           VisitSerializer, ObservationSerializer, CustomDocumentSerializer, DocumentRevisionSerializer, QuestionBankItemSerializer, AttendanceRecordSerializer, StudentFollowUpRecordSerializer, SupportPlanSerializer, ParentCommunicationSerializer, AssignmentSerializer, AssignmentSubmissionSerializer, TeacherTaskSerializer, MeetingSerializer, ParentMeetingDaySerializer, ParentAppointmentSerializer, SupportGroupSerializer, AssessmentSerializer, AssessmentResultSerializer)
 from django.http import HttpResponse
@@ -45,66 +60,96 @@ RESOURCE_MAP = {
 
 
 def local_user():
-    """The single local teacher who owns everything (no sign-in mode)."""
-    user, _ = User.objects.get_or_create(
-        username="teacher",
-        defaults={"first_name": "سمير", "last_name": "حداد", "email": "teacher@example.dz"})
-    return user
+    """Return the provisioned account that owns the private teaching workspace.
+
+    Never create a login implicitly during an API request. Use the private
+    ``provision_teacher`` management command to create or reset this account.
+    """
+    try:
+        return User.objects.get(username=settings.TEACHER_USERNAME, is_active=True)
+    except User.DoesNotExist as exc:
+        raise ImproperlyConfigured(
+            "The private teacher account is not provisioned. "
+            "Run the provision_teacher management command."
+        ) from exc
 
 
 # ------------------------------------------------------------------ auth
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def register(request):
-    u, p = request.data.get("username", "").strip(), request.data.get("password", "")
-    if not u or len(p) < 6:
-        return Response({"detail": "اسم المستخدم وكلمة مرور (6 أحرف على الأقل) مطلوبان."},
-                        status=status.HTTP_400_BAD_REQUEST)
-    if User.objects.filter(username=u).exists():
-        return Response({"detail": "اسم المستخدم مستعمل مسبقًا."}, status=status.HTTP_400_BAD_REQUEST)
-    user = User.objects.create_user(
-        username=u, password=p,
-        first_name=request.data.get("first_name", ""), last_name=request.data.get("last_name", ""),
-        email=request.data.get("email", ""))
-    token, _ = Token.objects.get_or_create(user=user)
-    return Response({"token": token.key, "user": UserSerializer(user).data}, status=201)
+@method_decorator(ensure_csrf_cookie, name="dispatch")
+class CSRFTokenView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({"detail": "CSRF cookie set."})
 
 
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def login(request):
-    user = authenticate(username=request.data.get("username", ""),
-                        password=request.data.get("password", ""))
-    if not user:
-        return Response({"detail": "بيانات الدخول غير صحيحة."}, status=status.HTTP_400_BAD_REQUEST)
-    token, _ = Token.objects.get_or_create(user=user)
-    return Response({"token": token.key, "user": UserSerializer(user).data})
+@method_decorator(csrf_protect, name="dispatch")
+class LoginView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    throttle_classes = [PrivateTeacherLoginThrottle]
+    throttle_scope = "teacher_login"
+
+    def post(self, request):
+        username = str(request.data.get("username") or "").strip()
+        password = request.data.get("password") or ""
+        user = authenticate(
+            request=request._request,
+            username=username,
+            password=password,
+        )
+        if not user or not user.is_active:
+            # Keep one generic response for unknown names, wrong passwords,
+            # and inactive accounts.
+            return Response(
+                {"detail": "بيانات الدخول غير صحيحة."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        # Require a profile with a recognized role for portal/workspace access.
+        # Users without a profile fall back to the legacy single-teacher check.
+        try:
+            profile = user.profile
+        except Exception:
+            if user.get_username() != settings.TEACHER_USERNAME:
+                return Response(
+                    {"detail": "حساب غير مصرح له بالدخول إلى المنصة."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+        else:
+            if profile.role not in ("teacher", "parent", "student"):
+                return Response(
+                    {"detail": "حساب غير مصرح له بالدخول إلى المنصة."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
+        auth_login(request._request, user)
+        request._request.session.set_expiry(settings.SESSION_COOKIE_AGE)
+        return Response({"user": UserSerializer(user).data})
 
 
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def demo_login(request):
-    """One-click demo session (local use): returns a token for the demo teacher."""
-    user, created = User.objects.get_or_create(
-        username="teacher",
-        defaults={"first_name": "سمير", "last_name": "حداد", "email": "teacher@example.dz"})
-    if created:
-        user.set_password("demo1234")
-        user.save()
-    token, _ = Token.objects.get_or_create(user=user)
-    return Response({"token": token.key, "user": UserSerializer(user).data})
-
-
-@api_view(["POST"])
-def logout(request):
-    request.user.auth_token.delete()
-    return Response({"detail": "تم تسجيل الخروج."})
+class LogoutView(APIView):
+    def post(self, request):
+        auth_logout(request._request)
+        return Response({"detail": "تم تسجيل الخروج."})
 
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def me(request):
-    return Response(UserSerializer(local_user()).data)
+    user = request.user
+    if not user or not user.is_authenticated or not user.is_active:
+        return Response({"user": None})
+    try:
+        profile = user.profile
+    except Exception:
+        # No profile: fall back to legacy single-teacher check.
+        if user.get_username() != settings.TEACHER_USERNAME:
+            return Response({"user": None})
+        return Response({"user": UserSerializer(user).data})
+    if profile.role not in ("teacher", "parent", "student"):
+        return Response({"user": None})
+    return Response({"user": UserSerializer(user).data})
 
 
 # ------------------------------------------------------------------ themes
@@ -251,6 +296,66 @@ class TimetableSlotViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return TimetableSlot.objects.filter(school_class__owner=local_user())
+
+    @action(detail=False, methods=["get"])
+    def detect_conflicts(self, request):
+        """Return all current timetable conflicts (class overlaps and room overlaps)."""
+        from .models import TimetableSlot
+        import datetime
+
+        qs = TimetableSlot.objects.filter(school_class__owner=local_user()).select_related("school_class")
+        slots = list(qs)
+        conflicts = []
+
+        def slot_end(s):
+            if s.end_time:
+                return s.end_time
+            start_dt = datetime.datetime.combine(datetime.date.today(), s.start_time)
+            return (start_dt + datetime.timedelta(minutes=45)).time()
+
+        def overlap(a_start, a_end, b_start, b_end):
+            return a_start < b_end and b_start < a_end
+
+        # Class conflicts
+        for i, a in enumerate(slots):
+            a_end = slot_end(a)
+            for b in slots[i + 1:]:
+                if a.school_class_id != b.school_class_id or a.weekday != b.weekday:
+                    continue
+                b_end = slot_end(b)
+                if overlap(a.start_time, a_end, b.start_time, b_end):
+                    conflicts.append({
+                        "type": "class",
+                        "weekday": a.weekday,
+                        "weekday_name": WEEKDAY_NAMES[a.weekday] if 0 <= a.weekday < 7 else "",
+                        "start_time": a.start_time.strftime("%H:%M"),
+                        "end_time": a_end.strftime("%H:%M"),
+                        "slot_a": {"id": a.id, "class": str(a.school_class), "room": a.room or "—"},
+                        "slot_b": {"id": b.id, "class": str(b.school_class), "room": b.room or "—"},
+                    })
+
+        # Room conflicts
+        for i, a in enumerate(slots):
+            if not a.room or not a.room.strip():
+                continue
+            a_end = slot_end(a)
+            for b in slots[i + 1:]:
+                if not b.room or not b.room.strip() or a.room != b.room or a.weekday != b.weekday:
+                    continue
+                b_end = slot_end(b)
+                if overlap(a.start_time, a_end, b.start_time, b_end):
+                    conflicts.append({
+                        "type": "room",
+                        "weekday": a.weekday,
+                        "weekday_name": WEEKDAY_NAMES[a.weekday] if 0 <= a.weekday < 7 else "",
+                        "start_time": a.start_time.strftime("%H:%M"),
+                        "end_time": a_end.strftime("%H:%M"),
+                        "room": a.room,
+                        "slot_a": {"id": a.id, "class": str(a.school_class)},
+                        "slot_b": {"id": b.id, "class": str(b.school_class)},
+                    })
+
+        return Response({"conflicts": conflicts, "count": len(conflicts)}, status=status.HTTP_200_OK)
 
 
 class CourseViewSet(OwnedViewSet):
@@ -3213,6 +3318,192 @@ class SchoolYearRolloverView(APIView):
                          "created_count": len(created), "skipped_count": len(skipped)}, status=201)
 
 
+class BackupVerifyView(APIView):
+    """Verify a backup file's integrity before import.
+
+    Returns a preview of what would be restored: record counts by model,
+    format validation, and any detected issues (missing fields, bad references).
+    Does not modify any data — safe dry-run for the user to review.
+    """
+
+    def post(self, request):
+        from django.core import serializers as dj_serializers
+        user = local_user()
+        payload = request.data
+
+        if isinstance(payload, dict):
+            if payload.get("format") not in (None, "teacherhub-backup"):
+                return Response({"detail": "صيغة ملف غير مدعومة."}, status=400)
+            data = payload.get("data")
+        else:
+            data = payload
+
+        if not isinstance(data, list):
+            return Response({"detail": "ملف النسخة الاحتياطية فارغ أو غير صالح."}, status=400)
+
+        issues = []
+        by_model = {}
+        total = len(data)
+        exported_at = payload.get("exported_at") if isinstance(payload, dict) else None
+
+        for i, obj in enumerate(data):
+            try:
+                # Deserialize without saving (dry-run) to validate structure
+                deserialized = list(dj_serializers.deserialize("json", json.dumps([obj])))
+                if not deserialized:
+                    issues.append({"row": i, "issue": "لا يمكن تحليل السجل", "severity": "error"})
+                    continue
+                do = deserialized[0]
+                model_label = do.object._meta.label.split(".")[-1]
+                by_model[model_label] = by_model.get(model_label, 0) + 1
+
+                # Check for missing required fields
+                for field in do.object._meta.concrete_fields:
+                    if field.null or field.blank or getattr(field, "auto_now", False) or getattr(field, "auto_now_add", False):
+                        continue
+                    if field.get_attname() not in do.object.__dict__ or do.object.__dict__[field.get_attname()] is None:
+                        issues.append({
+                            "row": i,
+                            "model": model_label,
+                            "field": field.name,
+                            "issue": f"حقل مطلوب مفقود: {field.name}",
+                            "severity": "warning",
+                        })
+            except Exception as exc:
+                issues.append({"row": i, "issue": f"خطأ في التحليل: {str(exc)[:120]}", "severity": "error"})
+
+        # Cross-reference checks: students without school_class, marks without student
+        student_ids = set()
+        for obj in data:
+            if obj.get("model") == "hub.student":
+                fk = obj.get("fields", {}).get("school_class")
+                if fk:
+                    student_ids.add(obj.get("pk"))
+
+        mark_orphans = 0
+        for obj in data:
+            if obj.get("model") == "hub.mark":
+                student_pk = obj.get("fields", {}).get("student")
+                if student_pk and student_pk not in student_ids:
+                    mark_orphans += 1
+        if mark_orphans:
+            issues.append({
+                "issue": f"{mark_orphans} علامة تشير إلى تلاميذ غير موجودين في النسخة",
+                "severity": "warning",
+            })
+
+        has_errors = any(i["severity"] == "error" for i in issues)
+        status_text = "invalid" if has_errors else ("warning" if issues else "valid")
+
+        return Response({
+            "valid": not has_errors,
+            "status": status_text,
+            "total_records": total,
+            "exported_at": exported_at,
+            "by_model": by_model,
+            "issues": issues[:50],
+            "issue_count": len(issues),
+        }, status=200)
+
+
+class ParentPortalViewSet(viewsets.ViewSet):
+    """Read-only portal API for parents to view their linked child's data."""
+
+    permission_classes = [IsParentAccount]
+    http_method_names = ["get"]
+
+    def _student(self, request):
+        profile = request.user.profile
+        return profile.linked_student
+
+    def list(self, request):
+        """Summary of the linked child for the parent dashboard."""
+        student = self._student(request)
+        if not student:
+            return Response({"detail": "No linked student."}, status=status.HTTP_404_NOT_FOUND)
+        cls = student.school_class
+        marks = list(student.marks.all().order_by("term"))
+        attendance_count = student.attendance_records.count()
+        return Response({
+            "student": StudentSerializer(student).data,
+            "school_class": SchoolClassSerializer(cls).data if cls else None,
+            "marks_count": len(marks),
+            "attendance_count": attendance_count,
+            "terms_with_marks": sorted(set(m.term for m in marks)),
+        })
+
+    @action(detail=False, methods=["get"])
+    def marks(self, request):
+        """All marks for the linked child."""
+        student = self._student(request)
+        if not student:
+            return Response({"detail": "No linked student."}, status=status.HTTP_404_NOT_FOUND)
+        marks = student.marks.all().order_by("term")
+        return Response(MarkSerializer(marks, many=True).data)
+
+    @action(detail=False, methods=["get"])
+    def attendance(self, request):
+        """Attendance records for the linked child."""
+        student = self._student(request)
+        if not student:
+            return Response({"detail": "No linked student."}, status=status.HTTP_404_NOT_FOUND)
+        records = student.attendance_records.all().order_by("-date")
+        return Response(AttendanceRecordSerializer(records, many=True).data)
+
+    @action(detail=False, methods=["get"])
+    def sessions(self, request):
+        """Taught sessions for the linked child's class."""
+        student = self._student(request)
+        if not student:
+            return Response({"detail": "No linked student."}, status=status.HTTP_404_NOT_FOUND)
+        sessions = Session.objects.filter(school_class=student.school_class).order_by("-date")
+        return Response(SessionSerializer(sessions, many=True).data)
+
+
+class StudentPortalViewSet(viewsets.ViewSet):
+    """Read-only portal API for students to view their own data."""
+
+    permission_classes = [IsStudentAccount]
+    http_method_names = ["get"]
+
+    def _student(self, request):
+        profile = request.user.profile
+        return profile.linked_student
+
+    def list(self, request):
+        """Summary of the student's own data for the portal dashboard."""
+        student = self._student(request)
+        if not student:
+            return Response({"detail": "No linked student."}, status=status.HTTP_404_NOT_FOUND)
+        cls = student.school_class
+        marks = list(student.marks.all().order_by("term"))
+        attendance_count = student.attendance_records.count()
+        return Response({
+            "student": StudentSerializer(student).data,
+            "school_class": SchoolClassSerializer(cls).data if cls else None,
+            "marks_count": len(marks),
+            "attendance_count": attendance_count,
+            "terms_with_marks": sorted(set(m.term for m in marks)),
+        })
+
+    @action(detail=False, methods=["get"])
+    def marks(self, request):
+        """All marks for the student."""
+        student = self._student(request)
+        if not student:
+            return Response({"detail": "No linked student."}, status=status.HTTP_404_NOT_FOUND)
+        marks = student.marks.all().order_by("term")
+        return Response(MarkSerializer(marks, many=True).data)
+
+    @action(detail=False, methods=["get"])
+    def attendance(self, request):
+        """Attendance records for the student."""
+        student = self._student(request)
+        if not student:
+            return Response({"detail": "No linked student."}, status=status.HTTP_404_NOT_FOUND)
+        records = student.attendance_records.all().order_by("-date")
+        return Response(AttendanceRecordSerializer(records, many=True).data)
+
 
 # ------------------------------------------------------------------ annual curriculum distribution & progression
 def _academic_year(today=None):
@@ -3530,6 +3821,9 @@ def _build_week(anchor=None):
     week_end = week_start + datetime.timedelta(days=6)
     classes = list(SchoolClass.objects.filter(owner=user).prefetch_related("slots").order_by("name"))
     courses = list(Course.objects.filter(owner=user).order_by("order", "id"))
+    plans_by_course = {}
+    for plan in LessonPlan.objects.filter(owner=user, course__isnull=False).order_by("-updated_at", "-id"):
+        plans_by_course.setdefault(plan.course_id, plan)
     progress_by_class = {cls.id: class_progress(cls, courses) for cls in classes}
     sessions = list(Session.objects.filter(owner=user, date__gte=week_start, date__lte=week_end)
                     .select_related("course", "school_class"))
@@ -3550,11 +3844,13 @@ def _build_week(anchor=None):
                 needs_log = bool(day < today and not logged and not holiday)
                 if needs_log: needs_log_count += 1
                 next_course = progress_by_class[cls.id]["next_course"]
+                next_plan = plans_by_course.get(next_course["id"]) if next_course and not logged else None
                 entries.append({
                     "slot_id": slot.id, "class_id": cls.id, "class_name": cls.name,
                     "start_time": str(slot.start_time) if slot.start_time else None,
                     "end_time": str(slot.end_time) if slot.end_time else None, "room": slot.room,
                     "next_course": next_course if not logged else None,
+                    "next_plan": {"id": next_plan.id, "title": next_plan.title} if next_plan else None,
                     "session": {"id": logged.id, "status": logged.status,
                                 "status_label": logged.get_status_display(),
                                 "course_title": logged.course.title if logged.course else None} if logged else None,
@@ -5929,6 +6225,282 @@ class DashboardView(APIView):
             "recent_entries": NoteEntrySerializer(entries.order_by("-date")[:5], many=True).data,
             "spotlight_theme": ThemeSerializer(spotlight).data if spotlight else None,
         })
+
+
+# ------------------------------------------------------------------ v2 multi-tenancy & academic foundation ViewSets
+
+
+class OrganizationViewSet(viewsets.ModelViewSet):
+    queryset = Organization.objects.all()
+    serializer_class = OrganizationSerializer
+
+
+class SchoolViewSet(viewsets.ModelViewSet):
+    queryset = School.objects.select_related("organization")
+    serializer_class = SchoolSerializer
+
+
+class CampusViewSet(viewsets.ModelViewSet):
+    queryset = Campus.objects.select_related("school")
+    serializer_class = CampusSerializer
+
+
+class AcademicYearViewSet(viewsets.ModelViewSet):
+    queryset = AcademicYear.objects.select_related("school")
+    serializer_class = AcademicYearSerializer
+
+
+class AcademicTermViewSet(viewsets.ModelViewSet):
+    queryset = AcademicTerm.objects.select_related("academic_year")
+    serializer_class = AcademicTermSerializer
+
+
+class EnrollmentViewSet(viewsets.ModelViewSet):
+    queryset = Enrollment.objects.select_related("student", "school", "academic_year", "class_section", "campus")
+    serializer_class = EnrollmentSerializer
+
+
+class ComputerLabViewSet(viewsets.ModelViewSet):
+    queryset = ComputerLab.objects.select_related("school", "campus").prefetch_related("seats")
+    serializer_class = ComputerLabSerializer
+
+
+class SeatViewSet(viewsets.ModelViewSet):
+    queryset = Seat.objects.select_related("lab", "lab__school")
+    serializer_class = SeatSerializer
+
+
+class SeatingAssignmentViewSet(viewsets.ModelViewSet):
+    queryset = SeatingAssignment.objects.select_related("student", "lab", "seat", "academic_year", "assigned_by")
+    serializer_class = SeatingAssignmentSerializer
+
+
+class SecurityAuditLogViewSet(viewsets.ModelViewSet):
+    """Security audit log — append-only, read-only through the API."""
+
+    queryset = SecurityAuditLog.objects.select_related("user").order_by("-created_at")
+    serializer_class = SecurityAuditLogSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.query_params.get("user")
+        action = self.request.query_params.get("action")
+        resource_type = self.request.query_params.get("resource_type")
+        from_date = self.request.query_params.get("from")
+        to_date = self.request.query_params.get("to")
+        if user:
+            qs = qs.filter(user_id=user)
+        if action:
+            qs = qs.filter(action=action)
+        if resource_type:
+            qs = qs.filter(resource_type=resource_type)
+        if from_date:
+            qs = qs.filter(created_at__date__gte=from_date)
+        if to_date:
+            qs = qs.filter(created_at__date__lte=to_date)
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        # Audit logs are append-only; creation only happens via the middleware/helper
+        return Response({"detail": "استخدم نقاط النهاية المخصصة لتسجيل الأحداث الأمنية."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def update(self, request, *args, **kwargs):
+        return Response({"detail": "سجلات التدقيق غير قابلة للتعديل."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def destroy(self, request, *args, **kwargs):
+        return Response({"detail": "سجلات التدقيق غير قابلة للحذف."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+
+class GradeRuleSetViewSet(viewsets.ModelViewSet):
+    queryset = GradeRuleSet.objects.select_related("school", "subject", "academic_year")
+    serializer_class = GradeRuleSetSerializer
+
+    @action(detail=True, methods=["post"])
+    def calculate(self, request, pk=None):
+        """Calculate grades for all students in the ruleset's scope and save results."""
+        ruleset = self.get_object()
+        school_class_id = request.data.get("school_class_id")
+        term = request.data.get("term")
+
+        if not school_class_id or term is None:
+            return Response(
+                {"detail": "school_class_id and term are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            school_class = SchoolClass.objects.get(id=school_class_id)
+        except SchoolClass.DoesNotExist:
+            return Response(
+                {"detail": "Class not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            term = int(term)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "term must be an integer."}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        academic_year = ruleset.academic_year or school_class.academic_year
+        if not academic_year:
+            return Response(
+                {"detail": "No academic year available."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        results = calculate_and_save_results(
+            school_class=school_class,
+            subject=ruleset.subject,
+            academic_year=academic_year,
+            term=term,
+            ruleset=ruleset,
+            recalculate_all=True,
+        )
+        serializer = CalculatedResultSerializer(results, many=True)
+        return Response(
+            {
+                "detail": f"Calculated grades for {len(results)} students.",
+                "results": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"])
+    def preview(self, request, pk=None):
+        """Preview a calculation for a single student without saving."""
+        ruleset = self.get_object()
+        student_id = request.data.get("student_id")
+        school_class_id = request.data.get("school_class_id")
+        term = request.data.get("term")
+
+        if not all([student_id, school_class_id, term is not None]):
+            return Response(
+                {"detail": "student_id, school_class_id, and term are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            student = Student.objects.get(id=student_id)
+            school_class = SchoolClass.objects.get(id=school_class_id)
+        except (Student.DoesNotExist, SchoolClass.DoesNotExist):
+            return Response(
+                {"detail": "Student or class not found."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            term = int(term)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "term must be an integer."}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        academic_year = ruleset.academic_year or school_class.academic_year
+        if not academic_year:
+            return Response(
+                {"detail": "No academic year available."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        calc = preview_calculation(
+            student=student,
+            school_class=school_class,
+            subject=ruleset.subject,
+            academic_year=academic_year,
+            term=term,
+            ruleset=ruleset,
+        )
+        return Response(calc, status=status.HTTP_200_OK)
+
+
+class CalculatedResultViewSet(viewsets.ModelViewSet):
+    queryset = CalculatedResult.objects.select_related("student", "school_class", "subject", "academic_year", "ruleset", "submitted_by", "reviewed_by")
+    serializer_class = CalculatedResultSerializer
+
+    @action(detail=True, methods=["post"])
+    def submit(self, request, pk=None):
+        """Submit a calculated result for review (calculated -> submitted)."""
+        result = self.get_object()
+        if not result.can_submit():
+            return Response(
+                {"detail": f"Cannot submit a result in '{result.status}' state."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result.status = "submitted"
+        result.submitted_by = request.user
+        result.submitted_at = timezone.now()
+        result.review_comment = ""
+        result.save(update_fields=["status", "submitted_by", "submitted_at", "review_comment"])
+        return Response({"detail": "Submitted for review.", "status": result.status}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """Approve a submitted result (submitted -> approved)."""
+        result = self.get_object()
+        if not result.can_approve():
+            return Response(
+                {"detail": f"Cannot approve a result in '{result.status}' state."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result.status = "approved"
+        result.reviewed_by = request.user
+        result.reviewed_at = timezone.now()
+        result.review_comment = request.data.get("comment", "")
+        result.save(update_fields=["status", "reviewed_by", "reviewed_at", "review_comment"])
+        return Response({"detail": "Approved.", "status": result.status}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        """Reject a submitted result (submitted -> rejected). Requires a comment."""
+        result = self.get_object()
+        if not result.can_reject():
+            return Response(
+                {"detail": f"Cannot reject a result in '{result.status}' state."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        comment = request.data.get("comment", "").strip()
+        if not comment:
+            return Response(
+                {"detail": "A rejection comment is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result.status = "rejected"
+        result.reviewed_by = request.user
+        result.reviewed_at = timezone.now()
+        result.review_comment = comment
+        result.save(update_fields=["status", "reviewed_by", "reviewed_at", "review_comment"])
+        return Response({"detail": "Rejected.", "status": result.status}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def publish(self, request, pk=None):
+        """Publish an approved result (approved -> published)."""
+        result = self.get_object()
+        if not result.can_publish():
+            return Response(
+                {"detail": f"Cannot publish a result in '{result.status}' state."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result.status = "published"
+        result.reviewed_by = request.user
+        result.reviewed_at = timezone.now()
+        result.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+        return Response({"detail": "Published.", "status": result.status}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"])
+    def void(self, request, pk=None):
+        """Void a result (published/approved/submitted/calculated -> voided)."""
+        result = self.get_object()
+        if not result.can_void():
+            return Response(
+                {"detail": f"Cannot void a result in '{result.status}' state."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        result.status = "voided"
+        result.reviewed_by = request.user
+        result.reviewed_at = timezone.now()
+        result.review_comment = request.data.get("comment", "")
+        result.save(update_fields=["status", "reviewed_by", "reviewed_at", "review_comment"])
+        return Response({"detail": "Voided.", "status": result.status}, status=status.HTTP_200_OK)
 
 
 # ------------------------------------------------------------------ dashboard extra counts patch

@@ -1,35 +1,78 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { Navigate, useLocation } from "react-router-dom";
 import { profileApi } from "./api";
 import { useLang } from "./i18n";
 
-// Local single-user mode: there is no sign-in. The "user" is simply the
-// local teacher profile served by the API, used for display in the sidebar.
-const AuthCtx = createContext({ user: null, loading: true });
+const AuthCtx = createContext({
+  user: null,
+  loading: true,
+  login: async () => null,
+  logout: async () => {},
+});
+
 export const useAuth = () => useContext(AuthCtx);
 
 export function AuthProvider({ children }) {
-  const { t, te } = useLang();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    profileApi.me()
-      .then(setUser)
-      .catch(() => setUser({ username: "teacher", first_name: t("الأستاذ"), last_name: "" }))
-      .finally(() => setLoading(false));
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const current = await profileApi.me();
+      setUser(current);
+      return current;
+    } catch {
+      setUser(null);
+      return null;
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  return <AuthCtx.Provider value={{ user, loading }}>{children}</AuthCtx.Provider>;
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const login = useCallback(async (username, password) => {
+    const result = await profileApi.login(username, password);
+    setUser(result.user);
+    return result.user;
+  }, []);
+
+  const logout = useCallback(async () => {
+    await profileApi.logout();
+    setUser(null);
+  }, []);
+
+  return (
+    <AuthCtx.Provider value={{ user, loading, login, logout, refresh }}>
+      {children}
+    </AuthCtx.Provider>
+  );
 }
 
 export function ProtectedRoute({ children }) {
-  const { t, te } = useLang();
-  const { loading } = useAuth();
-  if (loading)
+  const { t } = useLang();
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
     return (
-      <div className="d-flex vh-100 align-items-center justify-content-center">
-        <div className="spinner-border text-primary" role="status" />
+      <div className="th-auth-loading" role="status" aria-live="polite">
+        <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+        <span>{t("جارٍ التحقق من الجلسة…")}</span>
       </div>
     );
+  }
+
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: `${location.pathname}${location.search}${location.hash}` }}
+      />
+    );
+  }
+
   return children;
 }

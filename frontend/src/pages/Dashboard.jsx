@@ -1,173 +1,234 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
-import { Spinner } from "../components/States";
-import ThemeCard from "../components/ThemeCard";
-import Icon from "../components/Icon";
 import { useLang } from "../i18n";
+import Icon from "../components/Icon";
 
 const STATS = [
-  { key: "sessions", label: "حصة منفَّذة", icon: "calendar", to: "/sessions", cls: "stat-b" },
-  { key: "classes", label: "الأقسام", icon: "chart", to: "/classes", cls: "stat-c" },
-  { key: "students", label: "تلميذ", icon: "users", to: "/students", cls: "stat-a" },
-  { key: "courses", label: "دروس المقرر", icon: "book", to: "/courses", cls: "stat-a" },
-  { key: "lesson_plans", label: "خطط الدروس", icon: "layers", to: "/lesson-plans", cls: "stat-d" },
-  { key: "institutions", label: "مؤسسة للمتابعة", icon: "school", to: "/inspection", cls: "stat-c" },
-  { key: "visits", label: "زيارة تفتيشية", icon: "search", to: "/inspection", cls: "stat-b" },
-  { key: "themes", label: "سمة جاهزة للطباعة", icon: "palette", to: "/print", cls: "stat-d" },
+  { key: "classes", label: "الأقسام", icon: "school", to: "/classes" },
+  { key: "courses", label: "دروس المقرر", icon: "book", to: "/courses" },
+  { key: "lesson_plans", label: "خطط الدروس", icon: "layers", to: "/lesson-plans" },
+  { key: "sessions", label: "حصص مسجلة", icon: "calendar", to: "/sessions" },
 ];
+
+function SectionHeading({ eyebrow, title, action }) {
+  const { t } = useLang();
+  return (
+    <div className="th-section-heading">
+      <div>
+        {eyebrow && <div className="th-section-eyebrow">{t(eyebrow)}</div>}
+        <h2>{t(title)}</h2>
+      </div>
+      {action}
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { t, te } = useLang();
-  const [dash, setDash] = useState(null);
-  const [today, setToday] = useState(null);
-  const [align, setAlign] = useState(null);
+  const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setError("");
     Promise.all([api("/dashboard/"), api("/studio/today/"), api("/studio/alignment/")])
-      .then(([d, t, a]) => { setDash(d); setToday(t); setAlign(a); })
-      .catch((e) => setError(e.message));
-  }, []);
+      .then(([dashboard, today, alignment]) => {
+        if (active) setData({ dashboard, today, alignment });
+      })
+      .catch((requestError) => { if (active) setError(requestError.message); });
+    return () => { active = false; };
+  }, [retry]);
 
-  if (error) return <div className="alert alert-danger">{error}</div>;
-  if (!dash || !today || !align) return <Spinner label={t("جارٍ تحضير استوديو التدريس…")} />;
+  if (error) {
+    return (
+      <section className="th-state-panel" role="alert">
+        <span className="th-state-icon"><Icon name="bell" size={23} /></span>
+        <h1>{t("تعذّر تحميل مساحة التدريس")}</h1>
+        <p>{error}</p>
+        <button className="th-button th-button-primary" type="button" onClick={() => setRetry((value) => value + 1)}>
+          {t("إعادة المحاولة")}
+        </button>
+      </section>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="th-loading-state" role="status" aria-live="polite">
+        <span className="spinner-border spinner-border-sm" aria-hidden="true" />
+        <span>{t("جارٍ تحضير مساحة التدريس…")}</span>
+      </div>
+    );
+  }
+
+  const { dashboard, today, alignment } = data;
+  const schedule = today.schedule || [];
+  const suggestions = today.suggestions || [];
+  const matrix = alignment.matrix || [];
 
   return (
-    <>
-      <div className="studio-hero d-flex flex-wrap align-items-end justify-content-between gap-3">
-        <div style={{ maxWidth: 640 }}>
-          <h3 className="fw-bold mb-2">{t("استوديو التدريس")}</h3>
-          <p className="mb-0">
-            {te(today.weekday_name)} {today.date} — {t("درّس، سجّل الحصة، ودَع المنصة تزامن خططك وتقدّم أقسامك.")}
-          </p>
-        </div>
-        <Link to="/sessions" className="btn btn-primary rounded-pill px-4">{t("سجّل حصة الآن")}</Link>
-      </div>
-
-      <div className="row g-3 mb-4">
-        {STATS.map((s) => (
-          <div className="col-6 col-md-4 col-xl-3" key={s.key}>
-            <Link to={s.to} className={`stat-card ${s.cls}`}>
-              <span className="stat-icon"><Icon name={s.icon} size={21} /></span>
-              <span className="stat-num">{dash.counts[s.key]}</span>
-              <span className="stat-label">{t(s.label)}</span>
-            </Link>
+    <div className="th-home">
+      <section className="th-welcome-panel">
+        <div className="th-welcome-decoration" aria-hidden="true"><span /><span /></div>
+        <div className="th-welcome-copy">
+          <div className="th-welcome-meta">
+            <span className="th-date-pill"><Icon name="calendar" size={16} /> {te(today.weekday_name)} · {today.date}</span>
+            <span className="th-private-label"><span className="th-status-dot" />{t("مساحة الأستاذ")}</span>
           </div>
-        ))}
-      </div>
+          <h1>{t("مساحة التدريس اليومية")}</h1>
+          <p>{t("خطّط بهدوء، سجّل ما أُنجز، واعرف الخطوة التالية لكل فوج.")}</p>
+        </div>
+        <div className="th-welcome-actions">
+          <Link to="/sessions" className="th-button th-button-primary">
+            <Icon name="plus" size={18} /> {t("سجّل حصة")}
+          </Link>
+          <Link to="/planner" className="th-button th-button-glass">{t("افتح التخطيط الأسبوعي")}</Link>
+        </div>
+      </section>
 
-      <div className="row g-3">
-        <div className="col-12 col-xl-8">
-          <h5 className="fw-bold mb-3"> {t("حصص اليوم")} ({te(today.weekday_name)})</h5>
-          {today.schedule.length === 0 ? (
-            <div className="empty-state text-center py-4 mb-4">
-              <div className="empty-icon"></div>
-              <div className="fw-bold">{t("لا حصص مجدولة اليوم في استعمال الزمن")}</div>
-              <div className="text-secondary small">{t("أضف مواعيد أقسامك الأسبوعية من صفحة الأقسام لتظهر هنا.")}</div>
+      <section className="th-stats-grid" aria-label={t("ملخص مساحة التدريس")}>
+        {STATS.map((item) => (
+          <Link className="th-stat-card" to={item.to} key={item.key}>
+            <span className="th-stat-icon"><Icon name={item.icon} size={19} /></span>
+            <span className="th-stat-copy">
+              <span className="th-stat-value">{dashboard.counts?.[item.key] ?? 0}</span>
+              <span className="th-stat-label">{t(item.label)}</span>
+            </span>
+            <span className="th-stat-arrow" aria-hidden="true">↗</span>
+          </Link>
+        ))}
+      </section>
+
+      <div className="th-home-grid">
+        <section className="th-panel th-agenda-panel">
+          <SectionHeading
+            eyebrow="إيقاع اليوم"
+            title="حصص اليوم"
+            action={<Link className="th-text-link" to="/planner">{t("عرض الجدول")} <span aria-hidden="true">←</span></Link>}
+          />
+          {schedule.length === 0 ? (
+            <div className="th-empty-schedule">
+              <span className="th-empty-icon"><Icon name="calendar" size={24} /></span>
+              <div>
+                <h3>{t("لا توجد حصة في جدول اليوم")}</h3>
+                <p>{t("أضف مواعيد الأقسام الأسبوعية ليظهر برنامجك هنا.")}</p>
+                <Link to="/classes" className="th-inline-action">{t("إعداد استعمال الزمن")} <span aria-hidden="true">←</span></Link>
+              </div>
             </div>
           ) : (
-            <div className="row g-3 mb-4">
-              {today.schedule.map((s, i) => (
-                <div className="col-12 col-md-6" key={i}>
-                  <div className="card border-0 shadow-sm h-100 mini-card">
-                    <div className="card-body">
-                      <div className="d-flex justify-content-between align-items-start">
-                        <h6 className="fw-bold mb-1"> {s.class_name}</h6>
-                        <span className="badge rounded-pill text-bg-light border">
-                          {String(s.slot.start_time).slice(0, 5)} • {s.slot.room}
-                        </span>
-                      </div>
-                      <p className="text-secondary small mb-2">
-                        {t("الدرس التالي المقترح:")} <b className="text-dark">{s.next_course?.title || t("أُنهي المقرر —")}</b>
-                      </p>
-                      <div className="progress mb-2" style={{ height: 8 }}>
-                        <div className="progress-bar bg-success" style={{ width: `${s.progress.percent}%` }} />
-                      </div>
-                      {s.logged ? (
-                        <span className="badge rounded-pill text-bg-success">✓ {t("سُجّلت حصة اليوم لهذا الفوج")}</span>
-                      ) : (
-                        <Link to={`/sessions?cls=${s.slot.school_class}`} className="btn btn-sm btn-primary rounded-pill">
-                          سجّل حصة اليوم
-                        </Link>
-                      )}
+            <div className="th-agenda-list">
+              {schedule.map((item, index) => (
+                <article className="th-agenda-row" key={item.slot.id || `${item.slot.school_class}-${index}`}>
+                  <div className="th-agenda-time">
+                    <span>{String(item.slot.start_time || "—").slice(0, 5)}</span>
+                    <span className="th-agenda-line" aria-hidden="true" />
+                  </div>
+                  <div className="th-agenda-main">
+                    <div className="th-agenda-title-row">
+                      <h3>{item.class_name}</h3>
+                      <span className="th-room-label">{item.slot.room || t("قاعة غير محددة")}</span>
+                    </div>
+                    <p>{t("الدرس التالي")} · <strong>{item.next_course?.title || t("لم يُحدّد بعد")}</strong></p>
+                    <div className="th-agenda-progress" aria-label={`${item.progress?.percent || 0}%`}>
+                      <span style={{ width: `${item.progress?.percent || 0}%` }} />
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <h5 className="fw-bold mb-3"> {t("محاذاة الأقسام مع المقرر")}</h5>
-          <div className="card border-0 shadow-sm mb-4">
-            <div className="card-body">
-              {align.matrix.map((m) => (
-                <div key={m.class.id} className="align-row">
-                  <div className="d-flex justify-content-between">
-                    <span className="fw-bold"> {m.class.name}</span>
-                    <span className="small text-secondary">
-                      {m.progress.done_count}/{m.progress.total_courses} {t("دروس • التالي:")} {m.progress.next_course?.title || "—"}
-                    </span>
-                  </div>
-                  <div className="progress" style={{ height: 10 }}>
-                    <div className="progress-bar" style={{ width: `${m.progress.percent}%` }} />
-                  </div>
-                </div>
-              ))}
-              {align.insights.map((ins, i) => (
-                <div key={i} className="insight"> {ins.text}</div>
-              ))}
-              <Link to="/classes" className="btn btn-sm btn-outline-primary rounded-pill mt-2">{t("مصفوفة التقدّم الكاملة")}</Link>
-            </div>
-          </div>
-        </div>
-
-        <div className="col-12 col-xl-4">
-          <h5 className="fw-bold mb-3"> {t("الدرس التالي لكل فوج")}</h5>
-          {today.suggestions.map((s) => (
-            <div className="card border-0 shadow-sm mb-3 next-card" key={s.class_id}>
-              <div className="card-body">
-                <div className="d-flex justify-content-between align-items-start">
-                  <h6 className="fw-bold mb-1">{s.class_name}</h6>
-                  <span className="badge rounded-pill text-bg-light border">{s.percent}% {t("من المقرر")}</span>
-                </div>
-                <div className="next-course">{s.next_course.title}</div>
-                <div className="d-flex flex-wrap gap-1 my-2">
-                  {s.key_points.slice(0, 4).map((p, i) => (
-                    <span key={i} className="point-chip">{p}</span>
-                  ))}
-                </div>
-                <div className="d-flex gap-2">
-                  <Link to={`/sessions?cls=${s.class_id}`} className="btn btn-sm btn-primary rounded-pill flex-grow-1">
-                    سجّل هذه الحصة
+                  <Link to={`/sessions?cls=${item.slot.school_class}`} className={`th-agenda-cta${item.logged ? " is-done" : ""}`}>
+                    {item.logged ? t("تم التسجيل") : t("سجّل الحصة")}
                   </Link>
-                  {s.has_plan && (
-                    <Link to={`/preview/lesson-plan/${s.plan_id}`} className="btn btn-sm btn-outline-secondary rounded-pill">
-                      خطة الدرس
-                    </Link>
-                  )}
-                </div>
-              </div>
+                </article>
+              ))}
             </div>
-          ))}
-
-          <Link to="/print" className="card border-0 shadow-sm mb-3 print-cta text-decoration-none">
-            <div className="card-body d-flex align-items-center gap-3">
-              <span className="print-cta-icon"><Icon name="printer" size={26} /></span>
-              <div>
-                <div className="fw-bold text-dark">{t("مركز الطباعة PDF")}</div>
-                <div className="small text-secondary">{t("الدفتر اليومي، دفتر المفتش، دفتر التنقيط، خطط ومذكرات — كلها جاهزة للتنزيل والطباعة")}</div>
-              </div>
-            </div>
-          </Link>
-
-          <h5 className="fw-bold mb-3 mt-4">{t("سمة مميزة")}</h5>
-          {dash.spotlight_theme && (
-            <ThemeCard theme={dash.spotlight_theme}
-              footer={<Link to="/themes" className="btn btn-sm btn-primary rounded-pill w-100">{t("جرّبها على دفاترك")}</Link>} />
           )}
-        </div>
+        </section>
+
+        <section className="th-panel th-next-panel">
+          <SectionHeading eyebrow="الخطوة التالية" title="ماذا أُدرّس بعد ذلك؟" />
+          {suggestions.length === 0 ? (
+            <div className="th-simple-empty">
+              <p>{t("أضف فوجًا ومقررًا لتظهر هنا الخطوة التعليمية المقترحة.")}</p>
+              <Link to="/courses" className="th-inline-action">{t("استعراض المقرر")} <span aria-hidden="true">←</span></Link>
+            </div>
+          ) : (
+            <div className="th-next-list">
+              {suggestions.slice(0, 4).map((item) => (
+                <article className="th-next-item" key={item.class_id}>
+                  <div className="th-next-topline">
+                    <span className="th-class-chip">{item.class_name}</span>
+                    <span className="th-progress-label">{item.percent}% {t("من المقرر")}</span>
+                  </div>
+                  <h3>{item.next_course?.title || t("اكتمل المقرر")}</h3>
+                  <div className="th-next-points">
+                    {(item.key_points || []).slice(0, 3).map((point, pointIndex) => (
+                      <span key={`${point}-${pointIndex}`}>{point}</span>
+                    ))}
+                  </div>
+                  <div className="th-next-actions">
+                    <Link to={`/sessions?cls=${item.class_id}`} className="th-button th-button-primary th-button-small">
+                      {t("سجّل الحصة")}
+                    </Link>
+                    {item.has_plan && (
+                      <Link to={`/preview/lesson-plan/${item.plan_id}`} className="th-button th-button-secondary th-button-small">
+                        {t("خطة الدرس")}
+                      </Link>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
-    </>
+
+      <section className="th-panel th-progress-panel">
+        <SectionHeading
+          eyebrow="متابعة التقدم"
+          title="تقدّم الأفواج في المقرر"
+          action={<Link className="th-text-link" to="/classes">{t("كل الأقسام")} <span aria-hidden="true">←</span></Link>}
+        />
+        {matrix.length === 0 ? (
+          <div className="th-simple-empty"><p>{t("ستظهر مقارنة التقدم بعد إضافة الأقسام.")}</p></div>
+        ) : (
+          <div className="th-progress-list">
+            {matrix.map((row) => (
+              <div className="th-progress-row" key={row.class.id}>
+                <div className="th-progress-class">
+                  <span className="th-class-avatar">{row.class.name.slice(0, 1)}</span>
+                  <span><strong>{row.class.name}</strong><small>{t("دروس مكتملة")}: {row.progress.done_count}/{row.progress.total_courses}</small></span>
+                </div>
+                <div className="th-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={row.progress.percent} aria-label={`${row.class.name} ${row.progress.percent}%`}>
+                  <span style={{ width: `${row.progress.percent}%` }} />
+                </div>
+                <div className="th-progress-next">{row.progress.next_course?.title || t("اكتمل المقرر")}</div>
+                <strong className="th-progress-percent">{row.progress.percent}%</strong>
+              </div>
+            ))}
+          </div>
+        )}
+        {(alignment.insights || []).length > 0 && (
+          <div className="th-insights-list">
+            {alignment.insights.slice(0, 3).map((insight, index) => (
+              <div className="th-insight" key={`${insight.text}-${index}`}>
+                <Icon name="sparkle" size={16} /> <span>{insight.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="th-quick-actions">
+        <div>
+          <div className="th-section-eyebrow">{t("إجراءات سريعة")}</div>
+          <h2>{t("ابدأ من هنا")}</h2>
+        </div>
+        <div className="th-quick-action-list">
+          <Link to="/courses/new" className="th-quick-action"><Icon name="book" size={18} /><span>{t("إضافة درس")}</span><span aria-hidden="true">↗</span></Link>
+          <Link to="/lesson-plans/new" className="th-quick-action"><Icon name="layers" size={18} /><span>{t("إنشاء خطة درس")}</span><span aria-hidden="true">↗</span></Link>
+          <Link to="/classes" className="th-quick-action"><Icon name="school" size={18} /><span>{t("إدارة الأقسام")}</span><span aria-hidden="true">↗</span></Link>
+        </div>
+      </section>
+    </div>
   );
 }

@@ -251,16 +251,16 @@ export default function ThemesPage() {
         <div className="card-body py-3">
           <div className="row g-2">
             <div className="col-12 col-md-5">
-              <input className="form-control" placeholder={" " + t("ابحث باسم السمة…")} value={q} onChange={(e) => setQ(e.target.value)} />
+              <input className="form-control" aria-label={t("ابحث باسم السمة…")} placeholder={" " + t("ابحث باسم السمة…")} value={q} onChange={(e) => setQ(e.target.value)} />
             </div>
             <div className="col-6 col-md-3">
-              <select className="form-select" value={style} onChange={(e) => setStyle(e.target.value)}>
+              <select className="form-select" aria-label={t("كل الأساليب")} value={style} onChange={(e) => setStyle(e.target.value)}>
                 <option value="">{t("كل الأساليب")}</option>
                 {STYLES.slice(1).map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div className="col-6 col-md-4">
-              <div className="btn-group w-100" role="group">
+              <div className="d-flex flex-wrap gap-2" role="group" aria-label={t("مصدر السمات")}>
                 {[["", t("الكل")], ["curated", t("مصممة")], ["generated", t("مولّدة آليًا")], ["custom", t("مخصصة")]].map(([v, l]) => (
                   <button key={v} className={`btn ${source === v ? "btn-primary" : "btn-outline-primary"}`}
                     onClick={() => setSource(v)}>{l}</button>

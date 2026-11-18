@@ -7,6 +7,7 @@ loaded automatically and never overrides real environment variables.
 """
 import os
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BASE_DIR.parent
@@ -28,19 +29,62 @@ _load_env_file(REPO_ROOT / ".env")
 _load_env_file(REPO_ROOT / ".env.local")
 _load_env_file(BASE_DIR / ".env")
 
-SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "dev-only-teacherhub-local-key-change-me")
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+_secret_key = os.environ.get("DJANGO_SECRET_KEY")
+if not DEBUG and not _secret_key:
+    raise ImproperlyConfigured("DJANGO_SECRET_KEY must be configured when DEBUG is disabled.")
+SECRET_KEY = _secret_key or "dev-only-teacherhub-local-key-change-me"
+# The existing data model and bundled snapshot are keyed to this single owner.
+TEACHER_USERNAME = "teacher"
 
-ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
 _render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+_default_hosts = "*" if DEBUG else (_render_host or "")
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", _default_hosts).split(",") if h.strip()]
 if _render_host and _render_host not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(_render_host)
+if not DEBUG and not ALLOWED_HOSTS:
+    raise ImproperlyConfigured("Set DJANGO_ALLOWED_HOSTS or use a host-provided external hostname.")
 
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
 if _render_host:
     CSRF_TRUSTED_ORIGINS.append(f"https://{_render_host}")
+if DEBUG:
+    # Local Vite and the isolated Arena preview proxy to Django on the same
+    # origin, but the browser's Origin still reflects the Vite preview host.
+    CSRF_TRUSTED_ORIGINS.extend([
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+        "https://*.e2b.app",
+    ])
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+SESSION_COOKIE_AGE = 12 * 60 * 60
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SECURE = not DEBUG
+
+if DEBUG:
+    # Convenient for local-only workflows and automated tests.
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "teacherhub-development-cache",
+        }
+    }
+else:
+    # Render runs multiple Gunicorn workers. Persist throttles in the existing
+    # shared Postgres database rather than using per-process memory.
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+            "LOCATION": "teacherhub_cache",
+            "OPTIONS": {"MAX_ENTRIES": 10000, "CULL_FREQUENCY": 3},
+        }
+    }
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -55,7 +99,6 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    "config.settings.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -64,24 +107,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
 ]
-
-
-class CorsMiddleware:
-    """Tiny CORS allow-all for local dev (React dev server on :5173)."""
-
-    def __init__(self, get_response):
-        self.get_response = get_response
-
-    def __call__(self, request):
-        if request.method == "OPTIONS":
-            from django.http import HttpResponse
-            resp = HttpResponse()
-        else:
-            resp = self.get_response(request)
-        resp["Access-Control-Allow-Origin"] = "*"
-        resp["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
-        resp["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        return resp
 
 
 ROOT_URLCONF = "config.urls"
@@ -102,13 +127,18 @@ elif DEBUG:
 else:
     # Production must never silently fall back to a disposable local file:
     # on hosts like Render that file is wiped on every rebuild.
-    from django.core.exceptions import ImproperlyConfigured
     raise ImproperlyConfigured(
         "DATABASE_URL is not set. In production (DJANGO_DEBUG=0) TeacherHub "
         "requires a real database — set DATABASE_URL to your Neon connection "
         "string in the host's environment settings.")
 
-AUTH_PASSWORD_VALIDATORS = []
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+     "OPTIONS": {"min_length": 12}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
 LANGUAGE_CODE = "ar"
 TIME_ZONE = "Africa/Algiers"
 USE_I18N = True
@@ -121,9 +151,11 @@ STORAGES = {"staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFiles
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {
-    # Local single-user mode: no sign-in. All data belongs to one local teacher.
-    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.TokenAuthentication"],
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": ["hub.permissions.IsTeacherAccount"],
+    "DEFAULT_THROTTLE_RATES": {"teacher_login": "10/minute"},
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 100,
 }

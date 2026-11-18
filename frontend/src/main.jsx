@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
@@ -7,10 +7,23 @@ import { LangProvider } from "./i18n";
 import { ToastProvider } from "./components/Toast";
 import ErrorBoundary from "./components/ErrorBoundary";
 import Layout from "./components/Layout";
+import LoginPage from "./pages/Login";
 
 // Load each workflow only when it is opened. The previous eager imports put
 // every screen into one ~900 KB JavaScript entry bundle.
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const OrganizationsPage = lazy(() => import("./pages/Organizations"));
+const SchoolsPage = lazy(() => import("./pages/Schools"));
+const AcademicYearsPage = lazy(() => import("./pages/AcademicYears"));
+const AcademicTermsPage = lazy(() => import("./pages/AcademicTerms"));
+const CampusesPage = lazy(() => import("./pages/Campuses"));
+const EnrollmentsPage = lazy(() => import("./pages/Enrollments"));
+const ComputerLabsPage = lazy(() => import("./pages/ComputerLabs"));
+const SeatsPage = lazy(() => import("./pages/Seats"));
+const SeatingAssignmentsPage = lazy(() => import("./pages/SeatingAssignments"));
+const SecurityCenterPage = lazy(() => import("./pages/SecurityCenter"));
+const ParentPortalPage = lazy(() => import("./pages/ParentPortal"));
+const StudentPortalPage = lazy(() => import("./pages/StudentPortal"));
 const ThemesPage = lazy(() => import("./pages/Themes"));
 const JournalsPage = lazy(() => import("./pages/Resources").then((m) => ({ default: m.JournalsPage })));
 const LessonPlansPage = lazy(() => import("./pages/Resources").then((m) => ({ default: m.LessonPlansPage })));
@@ -40,6 +53,7 @@ const ProgressionPage = lazy(() => import("./pages/Progression"));
 const CampaignsPage = lazy(() => import("./pages/Campaigns"));
 const PlannerPage = lazy(() => import("./pages/Planner"));
 const GradebookPage = lazy(() => import("./pages/Gradebook"));
+const GradebookCalculationPage = lazy(() => import("./pages/GradebookCalculation"));
 const MeetingsPage = lazy(() => import("./pages/Meetings"));
 const ExamSeasonPage = lazy(() => import("./pages/ExamSeason"));
 const CeremonyPage = lazy(() => import("./pages/Ceremony"));
@@ -54,11 +68,11 @@ const YearReviewPage = lazy(() => import("./pages/YearReview"));
 const AssessmentsPage = lazy(() => import("./pages/Assessments"));
 
 async function startApp() {
-  let savedLang = "en";
+  let savedLang = "ar";
   try {
-    savedLang = localStorage.getItem("teacherhub-lang") || "en";
+    savedLang = localStorage.getItem("teacherhub-lang") || "ar";
   } catch {
-    // Private browsing may disable localStorage; English remains the fallback.
+    // Private browsing may disable localStorage; Arabic is the product default.
   }
 
   if (savedLang === "ar") await import("bootstrap/dist/css/bootstrap.rtl.min.css");
@@ -73,8 +87,21 @@ async function startApp() {
             <ErrorBoundary>
               <ToastProvider>
                 <Routes>
+                  <Route path="/login" element={<LoginPage />} />
                   <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
                     <Route path="/" element={<Dashboard />} />
+                    <Route path="/organizations" element={<OrganizationsPage />} />
+                    <Route path="/schools" element={<SchoolsPage />} />
+                    <Route path="/academic-years" element={<AcademicYearsPage />} />
+                    <Route path="/academic-terms" element={<AcademicTermsPage />} />
+                    <Route path="/campuses" element={<CampusesPage />} />
+                    <Route path="/enrollments" element={<EnrollmentsPage />} />
+                    <Route path="/computer-labs" element={<ComputerLabsPage />} />
+                    <Route path="/seats" element={<SeatsPage />} />
+                    <Route path="/seating-assignments" element={<SeatingAssignmentsPage />} />
+                    <Route path="/security-center" element={<SecurityCenterPage />} />
+                    <Route path="/parent-portal" element={<ParentPortalPage />} />
+                    <Route path="/student-portal" element={<StudentPortalPage />} />
                     <Route path="/sessions" element={<SessionsPage />} />
                     <Route path="/classes" element={<ClassesPage />} />
                     <Route path="/students" element={<StudentsPage />} />
@@ -104,6 +131,7 @@ async function startApp() {
                     <Route path="/campaigns" element={<CampaignsPage />} />
                     <Route path="/planner" element={<PlannerPage />} />
                     <Route path="/gradebook" element={<GradebookPage />} />
+                    <Route path="/gradebook-calculation" element={<GradebookCalculationPage />} />
                     <Route path="/meetings" element={<MeetingsPage />} />
                     <Route path="/year-review" element={<YearReviewPage />} />
                     <Route path="/exam-season" element={<ExamSeasonPage />} />

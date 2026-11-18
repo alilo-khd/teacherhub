@@ -5,75 +5,91 @@ import { useAuth } from "../auth";
 import { useLang, LANGS } from "../i18n";
 import Icon from "./Icon";
 
-const GROUPS = [
+const CORE_LINKS = [
+  { to: "/", label: "اليوم", icon: "grid", end: true },
+  { to: "/planner", label: "التخطيط الأسبوعي", icon: "calendar" },
+  { to: "/courses", label: "المقرر الدراسي", icon: "book" },
+  { to: "/lesson-plans", label: "خطط الدروس", icon: "layers" },
+  { to: "/classes", label: "الأقسام", icon: "school" },
+  { to: "/sessions", label: "سجلّ الحصص", icon: "check" },
+  { to: "/analytics", label: "مراجعة التقدّم", icon: "chart" },
+];
+
+// Existing workflows remain reachable during the scope review; core teaching
+// tasks stay visible, while specialist modules are grouped under More tools.
+const TOOL_GROUPS = [
   {
-    label: "نظرة عامة",
+    label: "التلاميذ والتقييم",
     links: [
-      { to: "/", label: "استوديو التدريس", icon: "grid", end: true },
-      { to: "/assistant", label: "المساعد الذكي", icon: "sparkle" },
-      { to: "/opening", label: "معالج افتتاح السنة", icon: "school" },
-      { to: "/analytics", label: "تحليلات الفوج والثلاثي", icon: "chart" },
-      { to: "/actions", label: "مركز الإجراءات", icon: "bell" },
-      { to: "/reports", label: "تقارير الثلاثي", icon: "file" },
-      { to: "/year-review", label: "الحصيلة السنوية", icon: "chart" },
-      { to: "/exam-season", label: "موسم الامتحانات والمراجعة", icon: "clock" },
-      { to: "/ceremony", label: "حفل التكريم والشهادات", icon: "sparkle" },
-    ],
-  },
-  {
-    label: "التدريس",
-    links: [
-      { to: "/planner", label: "التخطيط الأسبوعي", icon: "calendar" },
-      { to: "/sessions", label: "سجلّ الحصص", icon: "calendar" },
-      { to: "/classes", label: "الأقسام والتقدّم", icon: "chart" },
       { to: "/students", label: "التلاميذ والنقاط", icon: "users" },
       { to: "/gradebook", label: "إدخال النقاط", icon: "check" },
       { to: "/assessments", label: "الفروض والاختبارات", icon: "clipboard" },
       { to: "/follow-up", label: "الحضور ومتابعة التلاميذ", icon: "check" },
       { to: "/support", label: "الدعم وتواصل الأولياء", icon: "users" },
       { to: "/remedial", label: "مجموعات الدعم والاستدراك", icon: "users" },
-      { to: "/campaigns", label: "تواصل الأولياء الجماعي", icon: "pen" },
-      { to: "/parent-meetings", label: "يوم لقاء الأولياء", icon: "users" },
       { to: "/assignments", label: "المهام والواجبات", icon: "clipboard" },
-      { to: "/courses", label: "الدروس والمقرر الدراسي", icon: "book" },
-      { to: "/progression", label: "التوزيع السنوي والتقدم", icon: "layers" },
     ],
   },
   {
-    label: "الوثائق",
+    label: "المحتوى والوثائق",
     links: [
-      { to: "/lesson-plans", label: "خطط الدروس", icon: "layers" },
       { to: "/journals", label: "الدفاتر اليومية", icon: "notebook" },
       { to: "/notebooks", label: "دفاتر الملاحظات", icon: "pen" },
-      { to: "/themes", label: "استوديو السمات", icon: "palette" },
-    ],
-  },
-  {
-    label: "الإبداع والأدوات",
-    links: [
       { to: "/creator", label: "استوديو الإنشاء والتحرير", icon: "sparkle" },
       { to: "/question-bank", label: "بنك الأسئلة", icon: "clipboard" },
+      { to: "/themes", label: "استوديو السمات", icon: "palette" },
+      { to: "/print", label: "مركز الطباعة PDF", icon: "printer" },
     ],
   },
   {
-    label: "التنظيم والطباعة",
+    label: "التحليلات والتنظيم",
     links: [
+      { to: "/actions", label: "مركز الإجراءات", icon: "bell" },
+      { to: "/reports", label: "تقارير الثلاثي", icon: "file" },
+      { to: "/progression", label: "التوزيع السنوي والتقدم", icon: "layers" },
+      { to: "/year-review", label: "الحصيلة السنوية", icon: "chart" },
       { to: "/calendar", label: "العطل والندوات", icon: "sun" },
       { to: "/inspection", label: "التفتيش والمتابعة", icon: "search" },
       { to: "/portfolio", label: "ملف التفتيش والجاهزية", icon: "id" },
       { to: "/inspection-simulation", label: "محاكاة التفتيش", icon: "search" },
+      { to: "/opening", label: "معالج افتتاح السنة", icon: "school" },
+      { to: "/exam-season", label: "موسم الامتحانات والمراجعة", icon: "clock" },
+      { to: "/ceremony", label: "حفل التكريم والشهادات", icon: "sparkle" },
+      { to: "/campaigns", label: "تواصل الأولياء الجماعي", icon: "pen" },
+      { to: "/parent-meetings", label: "يوم لقاء الأولياء", icon: "users" },
       { to: "/meetings", label: "مجالس الأقسام والاجتماعات", icon: "users" },
+      { to: "/assistant", label: "المساعد الذكي", icon: "sparkle" },
       { to: "/profile", label: "البطاقة المهنية", icon: "id" },
-      { to: "/print", label: "مركز الطباعة PDF", icon: "printer" },
       { to: "/backup", label: "النسخ الاحتياطي والأرشفة", icon: "download" },
     ],
   },
+  {
+    label: "الإدارة الأكاديمية (v2)",
+    links: [
+      { to: "/organizations", label: "المنظمات", icon: "school" },
+      { to: "/schools", label: "المدارس", icon: "university" },
+      { to: "/academic-years", label: "السنوات الدراسية", icon: "calendar" },
+      { to: "/academic-terms", label: "الفصول الدراسية", icon: "layers" },
+      { to: "/campuses", label: "المقرات والساحات", icon: "map" },
+      { to: "/enrollments", label: "التسجيلات", icon: "users" },
+      { to: "/computer-labs", label: "مختبرات الكمبيوتر", icon: "desktop" },
+      { to: "/seats", label: "المقاعد", icon: "chair" },
+      { to: "/seating-assignments", label: "تكليفات المقاعد", icon: "users" },
+      { to: "/security-center", label: "مركز الأمان", icon: "bell" },
+      { to: "/parent-portal", label: "بوابة أولياء الأمور", icon: "users" },
+      { to: "/student-portal", label: "بوابة التلميذ", icon: "user" },
+    ],
+  },
 ];
-const ALL_LINKS = GROUPS.flatMap((g) => g.links);
+
+const ALL_LINKS = [
+  ...CORE_LINKS,
+  ...TOOL_GROUPS.flatMap((group) => group.links),
+];
 
 function GlobalSearch() {
   const { t } = useLang();
-  const [q, setQ] = useState("");
+  const [query, setQuery] = useState("");
   const [groups, setGroups] = useState([]);
   const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
@@ -81,53 +97,77 @@ function GlobalSearch() {
   const location = useLocation();
 
   useEffect(() => {
-    const fn = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault(); inputRef.current?.focus();
+    const onShortcut = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
       }
     };
-    window.addEventListener("keydown", fn);
-    return () => window.removeEventListener("keydown", fn);
+    window.addEventListener("keydown", onShortcut);
+    return () => window.removeEventListener("keydown", onShortcut);
   }, []);
 
   useEffect(() => {
-    if (q.trim().length < 2) { setGroups([]); return; }
-    const id = setTimeout(() => {
-      api(`/search/?q=${encodeURIComponent(q.trim())}`)
-        .then((d) => { setGroups(d.groups || []); setOpen(true); })
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setGroups([]);
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      api(`/search/?q=${encodeURIComponent(trimmed)}`)
+        .then((data) => { setGroups(data.groups || []); setOpen(true); })
         .catch(() => setGroups([]));
     }, 240);
-    return () => clearTimeout(id);
-  }, [q]);
+    return () => clearTimeout(timer);
+  }, [query]);
 
-  const go = (route) => { setOpen(false); setQ(""); navigate(route); };
   useEffect(() => { setOpen(false); }, [location.pathname]);
-  const first = groups[0]?.results?.[0];
+
+  const firstResult = groups.flatMap((group) => group.results || [])[0];
+  const go = (route) => {
+    setOpen(false);
+    setQuery("");
+    navigate(route);
+  };
 
   return (
     <div className="global-search">
-      <Icon name="search" size={16} className="global-search-icon" />
-      <input ref={inputRef} className="form-control global-search-input" value={q}
+      <Icon name="search" size={17} className="global-search-icon" />
+      <input
+        ref={inputRef}
+        className="form-control global-search-input"
+        value={query}
         placeholder={t("ابحث في كل شيء… (Ctrl+K)")}
-        onChange={(e) => setQ(e.target.value)}
-        onFocus={() => groups.length && setOpen(true)}
+        aria-label={t("ابحث في كل شيء… (Ctrl+K)")}
+        aria-expanded={open && query.trim().length >= 2}
+        aria-controls="global-search-results"
+        role="combobox"
+        aria-autocomplete="list"
+        onChange={(event) => setQuery(event.target.value)}
+        onFocus={() => groups.length > 0 && setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && first) go(first.route);
-          if (e.key === "Escape") setOpen(false);
-        }} />
-      {open && q.trim().length >= 2 && (
-        <div className="search-dropdown">
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && firstResult) go(firstResult.route);
+          if (event.key === "Escape") setOpen(false);
+        }}
+      />
+      {open && query.trim().length >= 2 && (
+        <div className="search-dropdown" id="global-search-results" role="listbox">
           {groups.length === 0 ? (
             <div className="search-empty">{t("لا نتائج")}</div>
-          ) : groups.map((g) => (
-            <div key={g.key} className="search-group">
-              <div className="search-group-label">{t(g.label)}</div>
-              {g.results.map((r) => (
-                <button key={`${g.key}-${r.id}`} type="button" className="search-item"
-                  onMouseDown={(e) => { e.preventDefault(); go(r.route); }}>
-                  <span className="search-item-title">{r.title}</span>
-                  {r.subtitle && <span className="search-item-sub">{r.subtitle}</span>}
+          ) : groups.map((group) => (
+            <div key={group.key} className="search-group">
+              <div className="search-group-label">{t(group.label)}</div>
+              {group.results.map((result) => (
+                <button
+                  key={`${group.key}-${result.id}`}
+                  type="button"
+                  className="search-item"
+                  role="option"
+                  onMouseDown={(event) => { event.preventDefault(); go(result.route); }}
+                >
+                  <span className="search-item-title">{result.title}</span>
+                  {result.subtitle && <span className="search-item-sub">{result.subtitle}</span>}
                 </button>
               ))}
             </div>
@@ -138,99 +178,182 @@ function GlobalSearch() {
   );
 }
 
-export default function Layout() {
-  const { t, lang, setLang } = useLang();
-  const { user } = useAuth();
-  const [open, setOpen] = useState(false);
-  const location = useLocation();
-  const current = ALL_LINKS.find((l) =>
-    l.end ? location.pathname === l.to : location.pathname.startsWith(l.to) && l.to !== "/")
-    || (location.pathname.startsWith("/preview") ? { label: "معاينة" }
-      : location.pathname.startsWith("/editor") ? { label: "محرّر الوثائق" } : ALL_LINKS[0]);
+function SidebarLink({ link, t, onNavigate }) {
+  return (
+    <NavLink
+      to={link.to}
+      end={link.end}
+      onClick={onNavigate}
+      className={({ isActive }) => `th-nav-link${isActive ? " is-active" : ""}`}
+    >
+      <span className="th-nav-icon"><Icon name={link.icon} size={18} /></span>
+      <span className="th-nav-text">{t(link.label)}</span>
+    </NavLink>
+  );
+}
 
-  const sidebar = (
-    <div className="sidebar-inner">
-      <div className="brand">
-        <div className="brand-mark">TH</div>
-        <div className="brand-text">
-          <div className="brand-name">TeacherHub</div>
-          <div className="brand-sub">{{ ar: "منصة الأستاذ · الإعلام الآلي", en: "Teaching Studio · Informatics", fr: "Studio pédagogique · Informatique" }[lang]}</div>
+function SidebarContent({ t, user, toolsOpen, setToolsOpen, onNavigate, onLogout, logoutError, logoutBusy }) {
+  const initial = (user?.first_name || user?.username || "T").slice(0, 1);
+  return (
+    <div className="th-sidebar-content">
+      <div className="th-brand">
+        <div className="th-brand-mark" aria-hidden="true"><span>t</span></div>
+        <div className="th-brand-copy">
+          <div className="th-brand-name">TeacherHub</div>
+          <div className="th-brand-subtitle">{t("مساحة التدريس")}</div>
         </div>
       </div>
 
-      <nav className="side-nav">
-        {GROUPS.map((g) => (
-          <div className="nav-group" key={g.label}>
-            <div className="nav-group-label">{t(g.label)}</div>
-            {g.links.map((l) => (
-              <NavLink key={l.to} to={l.to} end={l.end} onClick={() => setOpen(false)}
-                className={({ isActive }) => `side-link ${isActive ? "active" : ""}`}>
-                <Icon name={l.icon} size={19} className="side-icon" />
-                <span>{t(l.label)}</span>
-              </NavLink>
-            ))}
-          </div>
-        ))}
+      <div className="th-workspace-label">{t("مساحة العمل")}</div>
+      <nav className="th-primary-nav" aria-label={t("التنقل الرئيسي")}>
+        {CORE_LINKS.map((link) => <SidebarLink key={link.to} link={link} t={t} onNavigate={onNavigate} />)}
       </nav>
 
-      <div className="sidebar-foot">
-        <div className="lang-label">{t("اختر لغة الواجهة")}</div>
-        <div className="lang-switch" role="group" aria-label="Language">
-          {LANGS.map((l) => (
-            <button key={l.code} type="button"
-              className={`lang-btn ${lang === l.code ? "active" : ""}`}
-              onClick={() => setLang(l.code)}>{l.label}</button>
+      <button
+        type="button"
+        className={`th-more-toggle${toolsOpen ? " is-open" : ""}`}
+        aria-expanded={toolsOpen}
+        aria-controls="th-secondary-nav"
+        onClick={() => setToolsOpen((value) => !value)}
+      >
+        <span className="th-more-icon"><Icon name="grid" size={17} /></span>
+        <span>{t("أدوات إضافية")}</span>
+        <span className="th-more-count">{TOOL_GROUPS.reduce((n, group) => n + group.links.length, 0)}</span>
+        <span className="th-chevron" aria-hidden="true">{toolsOpen ? "−" : "+"}</span>
+      </button>
+
+      {toolsOpen && (
+        <nav className="th-secondary-nav" id="th-secondary-nav" aria-label={t("أدوات إضافية")}>
+          {TOOL_GROUPS.map((group) => (
+            <section className="th-tool-group" key={group.label}>
+              <h2 className="th-tool-heading">{t(group.label)}</h2>
+              {group.links.map((link) => <SidebarLink key={link.to} link={link} t={t} onNavigate={onNavigate} />)}
+            </section>
           ))}
+        </nav>
+      )}
+
+      <div className="th-sidebar-footer">
+        <div className="th-user-card">
+          <span className="th-avatar" aria-hidden="true">{initial}</span>
+          <span className="th-user-copy">
+            <span className="th-user-name">{[user?.first_name, user?.last_name].filter(Boolean).join(" ") || t("الأستاذ")}</span>
+            <span className="th-user-role">{t("مساحة الأستاذ")}</span>
+          </span>
         </div>
-        <div className="user-chip">
-          <div className="avatar">{(user?.first_name || user?.username || "T")[0]}</div>
-          <div className="user-meta">
-            <div className="user-name">{user?.first_name} {user?.last_name}</div>
-            <div className="user-sub">{t("وضع محلي — بدون تسجيل دخول")}</div>
-          </div>
-          <span className="live-dot" title={t("يعمل محليًا")} />
-        </div>
+        {logoutError && <div className="th-logout-error" role="alert">{logoutError}</div>}
+        <button className="th-logout-button" type="button" onClick={onLogout} disabled={logoutBusy}>
+          <Icon name="logout" size={17} />
+          <span>{t(logoutBusy ? "جارٍ تسجيل الخروج…" : "تسجيل الخروج")}</span>
+        </button>
       </div>
     </div>
   );
+}
+
+export default function Layout() {
+  const { t, lang, setLang } = useLang();
+  const { user, logout } = useAuth();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [logoutError, setLogoutError] = useState("");
+  const [logoutBusy, setLogoutBusy] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    if (logoutBusy) return;
+    setLogoutError("");
+    setLogoutBusy(true);
+    try {
+      await logout();
+      setMobileOpen(false);
+      navigate("/login", { replace: true });
+    } catch {
+      setLogoutError(t("تعذّر تسجيل الخروج. حاول مرة أخرى."));
+      setLogoutBusy(false);
+    }
+  };
+
+  const current = ALL_LINKS.find((link) =>
+    link.end ? location.pathname === link.to : location.pathname.startsWith(link.to) && link.to !== "/")
+    || (location.pathname.startsWith("/preview") ? { label: "معاينة" }
+      : location.pathname.startsWith("/editor") ? { label: "محرّر الوثائق" } : CORE_LINKS[0]);
+  const secondaryActive = TOOL_GROUPS.some((group) => group.links.some((link) =>
+    location.pathname === link.to || location.pathname.startsWith(`${link.to}/`)));
+
+  useEffect(() => {
+    if (secondaryActive) setToolsOpen(true);
+    setMobileOpen(false);
+  }, [location.pathname, secondaryActive]);
+
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const onKeyDown = (event) => { if (event.key === "Escape") setMobileOpen(false); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileOpen]);
+
+  const sidebar = (
+    <SidebarContent
+      t={t}
+      user={user}
+      toolsOpen={toolsOpen}
+      setToolsOpen={setToolsOpen}
+      onNavigate={() => setMobileOpen(false)}
+      onLogout={handleLogout}
+      logoutError={logoutError}
+      logoutBusy={logoutBusy}
+    />
+  );
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar d-none d-lg-flex">{sidebar}</aside>
-      <div className={`offcanvas offcanvas-start sidebar-off ${open ? "show" : ""}`} tabIndex="-1"
-        style={{ visibility: open ? "visible" : "hidden" }}>
-        <div className="offcanvas-header pb-0">
-          <button type="button" className="btn-close btn-close-white" onClick={() => setOpen(false)}
-            aria-label={t("إغلاق")} />
-        </div>
+    <div className="th-app-shell">
+      <aside className={`th-sidebar${mobileOpen ? " is-open" : ""}`} aria-label={t("التنقل الرئيسي")}>
         {sidebar}
-      </div>
-      {open && <div className="offcanvas-backdrop fade show" onClick={() => setOpen(false)} />}
+      </aside>
+      <button
+        className={`th-sidebar-backdrop${mobileOpen ? " is-visible" : ""}`}
+        type="button"
+        tabIndex={mobileOpen ? 0 : -1}
+        aria-label={t("إغلاق القائمة")}
+        onClick={() => setMobileOpen(false)}
+      />
 
-      <main className="main-area">
-        <header className="topbar">
-          <button className="btn btn-light d-lg-none icon-btn" onClick={() => setOpen(true)}
-            aria-label={t("القائمة")}>
+      <main className="th-main">
+        <header className="th-topbar">
+          <button
+            type="button"
+            className="th-icon-button th-menu-button"
+            aria-label={t("فتح القائمة")}
+            aria-expanded={mobileOpen}
+            onClick={() => setMobileOpen(true)}
+          >
             <Icon name="grid" size={19} />
           </button>
-          <div className="topbar-crumb">
-            <span className="crumb-app">TeacherHub</span>
-            <span className="crumb-sep">/</span>
-            <span className="crumb-page">{t(current.label)}</span>
+          <div className="th-page-identity">
+            <span className="th-page-kicker">{t("TeacherHub · مساحة التدريس")}</span>
+            <span className="th-page-title">{t(current.label)}</span>
           </div>
           <GlobalSearch />
-          <div className="topbar-actions">
-            <select className="form-select form-select-sm lang-select" value={lang}
-              onChange={(e) => setLang(e.target.value)} aria-label="Language">
-              {LANGS.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+          <div className="th-topbar-actions">
+            <label className="visually-hidden" htmlFor="interface-language">{t("اختر لغة الواجهة")}</label>
+            <select
+              id="interface-language"
+              className="th-language-select"
+              value={lang}
+              onChange={(event) => setLang(event.target.value)}
+            >
+              {LANGS.map((item) => <option key={item.code} value={item.code}>{item.label}</option>)}
             </select>
-            <span className="local-badge"><span className="live-dot" /> {t("يعمل محليًا")}</span>
+            <span className="th-topbar-avatar" aria-hidden="true">{(user?.first_name || user?.username || "T").slice(0, 1)}</span>
           </div>
         </header>
-        <div className="content-wrap">
+
+        <div className="th-content-wrap">
           <Suspense fallback={
-            <div className="d-flex align-items-center justify-content-center gap-2 py-5 text-secondary" role="status" aria-live="polite">
-              <span className="spinner-border spinner-border-sm text-primary" aria-hidden="true" />
+            <div className="th-route-loading" role="status" aria-live="polite">
+              <span className="spinner-border spinner-border-sm" aria-hidden="true" />
               <span>{t("جارٍ التحميل…")}</span>
             </div>
           }>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { backupApi } from "../api/v2";
 import { Spinner } from "../components/States";
 import { useToast } from "../components/Toast";
 import { useLang } from "../i18n";
@@ -16,7 +17,9 @@ export default function BackupPage() {
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importPayload, setImportPayload] = useState(null);
+  const [importVerify, setImportVerify] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
   const [selected, setSelected] = useState({});
   const [yearLabel, setYearLabel] = useState("2026 / 2027");
   const [copyStudents, setCopyStudents] = useState(true);
@@ -57,6 +60,10 @@ export default function BackupPage() {
       const parsed = JSON.parse(await file.text());
       if (parsed.format !== "teacherhub-backup" || !Array.isArray(parsed.data)) throw new Error("invalid");
       setImportPayload(parsed);
+      setImportResult(null);
+      // Pre-import verification (dry-run)
+      const verify = await backupApi.verify(parsed);
+      setImportVerify(verify);
     } catch { toast(t("ملف نسخة احتياطية غير صالح"), "danger"); }
   };
 
@@ -65,7 +72,9 @@ export default function BackupPage() {
     try {
       const result = await api("/backup/import/", { method: "POST", body: importPayload });
       toast(`${t("استُوردت")} ${result.imported} ${t("سجلًا بنجاح")}`);
+      setImportResult(result);
       setImportPayload(null);
+      setImportVerify(null);
       await load();
     } catch (error) { toast(error.message, "danger"); }
     setImporting(false);
@@ -180,12 +189,73 @@ export default function BackupPage() {
         )}
       </div></div>
 
+      {/* Pre-import verification preview */}
+      {importVerify && (
+        <div className={`card border-${importVerify.status === "invalid" ? "danger" : importVerify.status === "warning" ? "warning" : "success"} shadow-sm mt-4`}>
+          <div className="card-body">
+            <div className="d-flex align-items-center gap-2 mb-2">
+              <span className={`badge ${
+                importVerify.status === "invalid" ? "bg-danger" :
+                importVerify.status === "warning" ? "bg-warning text-dark" : "bg-success"
+              }`}>
+                {importVerify.valid ? t("نتيجة الفحص: صالح") : t("نتيجة الفحص: غير صالح")}
+              </span>
+              <span className="badge text-bg-light border">{importVerify.total_records} {t("سجل")}</span>
+              {importVerify.exported_at && <span className="text-muted small">{t("تم التصدير")}: {importVerify.exported_at.slice(0, 10)}</span>}
+            </div>
+            <div className="mb-2">
+              <span className="fw-semibold small">{t("السجلات حسب النموذج")}:</span>
+              <div className="d-flex flex-wrap gap-2 mt-1">
+                {Object.entries(importVerify.by_model || {}).map(([model, count]) => (
+                  <span key={model} className="badge text-bg-light border">{model.replace("hub.", "")}: {count}</span>
+                ))}
+              </div>
+            </div>
+            {importVerify.issue_count > 0 && (
+              <div className="mb-2">
+                <span className="fw-semibold small text-danger">{t("المشاكل المكتشفة")} ({importVerify.issue_count}):</span>
+                <ul className="list-unstyled small mt-1">
+                  {importVerify.issues.slice(0, 10).map((issue, i) => (
+                    <li key={i} className={`text-${issue.severity === "error" ? "danger" : "warning"}`}>
+                      {issue.row !== undefined ? `[${issue.row}] ` : ""}
+                      {issue.issue}
+                    </li>
+                  ))}
+                  {importVerify.issues.length > 10 && <li className="text-muted">… و {importVerify.issues.length - 10} مشكلة إضافية</li>}
+                </ul>
+              </div>
+            )}
+            {!importVerify.valid && (
+              <p className="text-danger small mb-0">{t("تحتوي النسخة على أخطاء قد تمنع الاستيراد السليم. يُنصح بتصحيح الملف قبل المتابعة.")}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Post-import verification report */}
+      {importResult && (
+        <div className="card border-success shadow-sm mt-4"><div className="card-body">
+          <h6 className="fw-bold">{t("تقرير التحقق من الاستيراد")}</h6>
+          <p className="text-secondary">{t("تم استيراد")} {importResult.imported} {t("سجلًا بنجاح")}.</p>
+          <div className="d-flex flex-wrap gap-2 mt-2">
+            {Object.entries(importResult.by_model || {}).map(([model, count]) => (
+              <span key={model} className="badge text-bg-success">{model.replace("hub.", "")}: {count}</span>
+            ))}
+          </div>
+          <button className="btn btn-outline-primary rounded-pill mt-2" onClick={() => setImportResult(null)}>
+            {t("إغلاق التقرير")}
+          </button>
+        </div></div>
+      )}
+
       {importPayload && (
         <div className="card border-warning shadow-sm mt-4"><div className="card-body">
           <h6 className="fw-bold">{t("تأكيد استيراد النسخة الاحتياطية")}</h6>
           <p className="text-secondary">{t("سيتم استيراد")} {importPayload.data.length} {t("سجلًا من ملف نسخة احتياطية")} ({importPayload.exported_at?.slice(0, 10) || "—"}). {t("قد تُحدَّث سجلات موجودة بنفس المعرفات. هل تريدون المتابعة؟")}</p>
           <div className="d-flex gap-2">
-            <button className="btn btn-warning rounded-pill px-4" disabled={importing} onClick={runImport}>{importing ? <span className="spinner-border spinner-border-sm" /> : t("استيراد الآن")}</button>
+            <button className="btn btn-warning rounded-pill px-4" disabled={importing || (importVerify && !importVerify.valid)} onClick={runImport}>
+              {importing ? <span className="spinner-border spinner-border-sm" /> : importVerify && !importVerify.valid ? t("الاستيراد رغم الأخطاء") : t("استيراد الآن")}
+            </button>
             <button className="btn btn-light rounded-pill px-4" disabled={importing} onClick={() => setImportPayload(null)}>{t("إلغاء")}</button>
           </div>
         </div></div>

@@ -9,7 +9,15 @@ import FilterBar from "../components/FilterBar";
 import { useLang } from "../i18n";
 
 const STATUS = { done: ["منفَّذة", "success"], cancelled: ["ملغاة", "danger"], postponed: ["مؤجلة", "warning"] };
-const todayISO = () => new Date().toISOString().slice(0, 10);
+const todayISO = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+};
+const isISODate = (value) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+};
 
 function SessionModal({ initial, classes, courses, onSubmit, onClose }) {
   const { t, te } = useLang();
@@ -70,8 +78,8 @@ function SessionModal({ initial, classes, courses, onSubmit, onClose }) {
       <form onSubmit={submit}>
         <div className="row g-3">
           <div className="col-12 col-md-6">
-            <label className="form-label fw-semibold small">{t("القسم / الفوج *")}</label>
-            <select className="form-select" value={form.school_class} required
+            <label htmlFor="session-class" className="form-label fw-semibold small">{t("القسم / الفوج *")}</label>
+            <select id="session-class" className="form-select" value={form.school_class} required
               onChange={(e) => pickClass(e.target.value)}>
               <option value="">— {t("اختر الفوج —")}</option>
               {classes.map((c) => (
@@ -82,88 +90,92 @@ function SessionModal({ initial, classes, courses, onSubmit, onClose }) {
             </select>
           </div>
           <div className="col-12 col-md-6">
-            <label className="form-label fw-semibold small">{t("الدرس (من المقرر) — يُقترح التالي تلقائيًا")}</label>
-            <select className="form-select" value={form.course} onChange={(e) => pickCourse(e.target.value)}>
+            <label htmlFor="session-course" className="form-label fw-semibold small">{t("الدرس (من المقرر) — يُقترح التالي تلقائيًا")}</label>
+            <select id="session-course" className="form-select" value={form.course} onChange={(e) => pickCourse(e.target.value)}>
               <option value="">— {t("بدون درس محدد —")}</option>
               {courses.map((c) => <option key={c.id} value={c.id}>{c.order}. {c.title}</option>)}
             </select>
           </div>
           <div className="col-6 col-md-3">
-            <label className="form-label fw-semibold small">{t("التاريخ *")}</label>
-            <input type="date" className="form-control" value={form.date} required
+            <label htmlFor="session-date" className="form-label fw-semibold small">{t("التاريخ *")}</label>
+            <input id="session-date" type="date" className="form-control" value={form.date} required
               onChange={(e) => set("date", e.target.value)} />
           </div>
           <div className="col-6 col-md-3">
-            <label className="form-label fw-semibold small">{t("وقت البداية")}</label>
-            <input type="time" className="form-control" value={form.start_time}
+            <label htmlFor="session-start-time" className="form-label fw-semibold small">{t("وقت البداية")}</label>
+            <input id="session-start-time" type="time" className="form-control" value={form.start_time}
               onChange={(e) => set("start_time", e.target.value)} />
           </div>
           <div className="col-6 col-md-3">
-            <label className="form-label fw-semibold small">{t("المدة (د)")}</label>
-            <input type="number" className="form-control" value={form.duration} min={15} step={15}
+            <label htmlFor="session-duration" className="form-label fw-semibold small">{t("المدة (د)")}</label>
+            <input id="session-duration" type="number" className="form-control" value={form.duration} min={15} step={15}
               onChange={(e) => set("duration", e.target.value)} />
           </div>
           <div className="col-6 col-md-3">
-            <label className="form-label fw-semibold small">{t("الحالة")}</label>
-            <select className="form-select" value={form.status} onChange={(e) => set("status", e.target.value)}>
+            <label htmlFor="session-status" className="form-label fw-semibold small">{t("الحالة")}</label>
+            <select id="session-status" className="form-select" value={form.status} onChange={(e) => set("status", e.target.value)}>
               <option value="done">{t("منفَّذة")}</option>
               <option value="postponed">{t("مؤجلة")}</option>
               <option value="cancelled">{t("ملغاة")}</option>
             </select>
           </div>
 
-          <div className="col-12">
-            <label className="form-label fw-semibold small">
+          <fieldset className="col-12 session-points-fieldset">
+            <legend className="form-label fw-semibold small">
               {t("النقاط التي كتبها التلاميذ في هذه الحصة")} {course && <span className="text-secondary">(نقاط «{course.title}» الأساسية — علّم ما غُطّي فعلًا)</span>}
-            </label>
+            </legend>
             {course?.key_points?.length ? (
               <div className="points-box">
-                {course.key_points.map((p) => (
-                  <label key={p} className={`point-check ${points.includes(p) ? "on" : ""}`}>
-                    <input type="checkbox" className="d-none" checked={points.includes(p)}
-                      onChange={() => togglePoint(p)} />
-                    {points.includes(p) ? "✓ " : ""}{p}
-                  </label>
-                ))}
+                {course.key_points.map((p, index) => {
+                  const id = `session-point-${index}`;
+                  return (
+                    <label key={`${p}-${index}`} htmlFor={id} className={`point-check ${points.includes(p) ? "on" : ""}`}>
+                      <input id={id} type="checkbox" className="visually-hidden" checked={points.includes(p)}
+                        onChange={() => togglePoint(p)} />
+                      {points.includes(p) ? "✓ " : ""}{p}
+                    </label>
+                  );
+                })}
               </div>
             ) : (
               <div className="text-secondary small mb-2">{t("اختر درسًا لعرض نقاطه الأساسية، أو أضف نقاطًا يدويًا.")}</div>
             )}
             <div className="d-flex gap-2 mt-2">
-              <input className="form-control" placeholder={t("نقطة إضافية كتبها التلاميذ…")}
+              <label htmlFor="session-custom-point" className="visually-hidden">{t("نقطة إضافية كتبها التلاميذ…")}</label>
+              <input id="session-custom-point" className="form-control" placeholder={t("نقطة إضافية كتبها التلاميذ…")}
                 value={custom} onChange={(e) => setCustom(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (custom.trim()) { setPoints((xs) => [...xs, custom.trim()]); setCustom(""); } } }} />
               <button type="button" className="btn btn-outline-primary rounded-pill px-3"
                 onClick={() => { if (custom.trim()) { setPoints((xs) => [...xs, custom.trim()]); setCustom(""); } }}>
-                إضافة
+                {t("إضافة")}
               </button>
             </div>
             {points.filter((p) => !course?.key_points?.includes(p)).map((p) => (
               <span key={p} className="point-chip me-1 mt-2 d-inline-block">
                 {p} <button type="button" className="btn-close btn-close-sm ms-1" style={{ fontSize: 8 }}
-                  onClick={() => togglePoint(p)} aria-label={t("حذف")} />
+                  onClick={() => togglePoint(p)} aria-label={`${t("حذف")} ${p}`} />
               </span>
             ))}
-          </div>
+          </fieldset>
 
           <div className="col-12 col-md-8">
-            <label className="form-label fw-semibold small">{t("الواجب المنزلي")}</label>
-            <input className="form-control" value={form.homework}
+            <label htmlFor="session-homework" className="form-label fw-semibold small">{t("الواجب المنزلي")}</label>
+            <input id="session-homework" className="form-control" value={form.homework}
               onChange={(e) => set("homework", e.target.value)} placeholder={t("مثال: لخّص خطوات الإقلاع من BIOS")} />
           </div>
           <div className="col-12 col-md-4">
-            <label className="form-label fw-semibold small">{t("عدد الغائبين")}</label>
-            <input type="number" className="form-control" value={form.absentees} min={0}
+            <label htmlFor="session-absentees" className="form-label fw-semibold small">{t("عدد الغائبين")}</label>
+            <input id="session-absentees" type="number" className="form-control" value={form.absentees} min={0}
               onChange={(e) => set("absentees", e.target.value)} />
           </div>
           <div className="col-12">
-            <label className="form-label fw-semibold small">{t("ملخص ما كُتب على السبورة")}</label>
-            <textarea className="form-control" rows={2} value={form.board_summary}
+            <label htmlFor="session-board-summary" className="form-label fw-semibold small">{t("ملخص ما كُتب على السبورة")}</label>
+            <textarea id="session-board-summary" className="form-control" rows={2} value={form.board_summary}
               onChange={(e) => set("board_summary", e.target.value)} />
           </div>
           <div className="col-12">
-            <label className="form-label fw-semibold small">{t("ملاحظات الحصة")}</label>
-            <textarea className="form-control" rows={2} value={form.remarks}
+            <label htmlFor="session-remarks" className="form-label fw-semibold small">{t("ملاحظات الحصة")}</label>
+            <textarea id="session-remarks" className="form-control" rows={2} value={form.remarks}
               onChange={(e) => set("remarks", e.target.value)} placeholder={t("صعوبات، تفاعل التلاميذ، ما يجب استدراكه…")} />
           </div>
         </div>
@@ -186,7 +198,7 @@ export default function SessionsPage() {
   const [filterClass, setFilterClass] = useState("");
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const openedRef = useRef(false);
   const toast = useToast();
 
@@ -198,12 +210,29 @@ export default function SessionsPage() {
 
   useEffect(() => {
     const cls = params.get("cls");
-    if (cls && classes.length && !openedRef.current) {
-      openedRef.current = true;
-      const c = classes.find((x) => String(x.id) === cls);
-      setModal({ school_class: cls, course: c?.progress?.next_course?.id ?? "" });
+    if (!cls) {
+      openedRef.current = false;
+      return;
     }
-  }, [params, classes]);
+    if (!classes.length || openedRef.current) return;
+
+    openedRef.current = true;
+    const c = classes.find((x) => String(x.id) === cls);
+    const requestedDate = params.get("date");
+    const requestedCourse = params.get("course");
+    setModal({
+      school_class: cls,
+      course: requestedCourse || c?.progress?.next_course?.id || "",
+      date: isISODate(requestedDate) ? requestedDate : todayISO(),
+    });
+
+    // These parameters are a one-time capture prefill. Remove them after
+    // opening the form so a page refresh cannot accidentally reopen a blank
+    // duplicate session form.
+    const nextParams = new URLSearchParams(params);
+    ["cls", "date", "course"].forEach((key) => nextParams.delete(key));
+    setParams(nextParams, { replace: true });
+  }, [params, classes, setParams]);
 
   const [f, setF] = usePersistentState("sessions-filters", { q: "", status: "", course: "", from: "", to: "", sort: "-date" });
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));

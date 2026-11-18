@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { Spinner } from "../components/States";
 import { useToast } from "../components/Toast";
@@ -15,7 +15,6 @@ export default function PlannerPage() {
   const [anchor, setAnchor] = useState(() => toISO(new Date()));
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [busyKey, setBusyKey] = useState("");
   const [generating, setGenerating] = useState(false);
 
   const load = useCallback(async () => {
@@ -32,15 +31,13 @@ export default function PlannerPage() {
     setAnchor(toISO(d));
   };
 
-  const logSession = async (day, entry) => {
-    const key = `${day.date}-${entry.slot_id}`;
-    setBusyKey(key);
-    try {
-      await api("/sessions/", { method: "POST", body: { school_class: entry.class_id, course: entry.next_course?.id || null, date: day.date, status: "done", start_time: entry.start_time || undefined } });
-      toast(t("سُجّلت الحصة وانتقل الفوج إلى الدرس الموالي"));
-      await load();
-    } catch (error) { toast(error.message, "danger"); }
-    setBusyKey("");
+  const openSessionCapture = (day, entry) => {
+    const params = new URLSearchParams({
+      cls: String(entry.class_id),
+      date: day.date,
+    });
+    if (entry.next_course?.id) params.set("course", String(entry.next_course.id));
+    navigate(`/sessions?${params.toString()}`);
   };
 
   const generate = async () => {
@@ -58,7 +55,7 @@ export default function PlannerPage() {
       <div className="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4">
         <div>
           <h3 className="fw-bold mb-1">{t("مركز التخطيط الأسبوعي")}</h3>
-          <p className="text-secondary mb-0">{t("أسبوعكم بنظرة واحدة: حصص جدول التوقيت، الدرس الجاري لكل فوج، الحصص التي تحتاج تسجيلًا — وسجّلوا أي حصة بضغطة واحدة ليتقدم المقرر تلقائيًا.")}</p>
+          <p className="text-secondary mb-0">{t("أسبوعك بنظرة واحدة: حصص جدول التوقيت والدرس التالي لكل فوج. افتح الخطة المرتبطة أو أعدّ خطة، ثم سجّل ما أُنجز قبل الحفظ وتحديث التقدم.")}</p>
         </div>
         <button className="btn btn-primary rounded-pill" disabled={generating || !data} onClick={generate}>
           {generating ? <span className="spinner-border spinner-border-sm" /> : <><Icon name="printer" size={16} /> {t("توليد مخطط الأسبوع")}</>}
@@ -110,11 +107,26 @@ export default function PlannerPage() {
                           <div className="mt-1">
                             <div className="small">{t("الدرس الموالي")}: <span className="fw-semibold">{entry.next_course?.title || "—"}</span></div>
                             {entry.needs_log && <span className="badge text-bg-danger">{t("تنتظر التسجيل")}</span>}
-                            {entry.next_course && (
-                              <button className="btn btn-sm btn-primary rounded-pill mt-2" disabled={busyKey === `${day.date}-${entry.slot_id}`} onClick={() => logSession(day, entry)}>
-                                {busyKey === `${day.date}-${entry.slot_id}` ? <span className="spinner-border spinner-border-sm" /> : t("تسجيل كحصة منفذة")}
+                            <div className="d-flex flex-wrap gap-2 mt-2">
+                              <button className="btn btn-sm btn-primary rounded-pill"
+                                aria-label={`${t("فتح تسجيل الحصة")} — ${entry.class_name} — ${day.date}`}
+                                onClick={() => openSessionCapture(day, entry)}>
+                                {t("فتح تسجيل الحصة")}
                               </button>
-                            )}
+                              {entry.next_course && (entry.next_plan ? (
+                                <Link className="btn btn-sm btn-outline-secondary rounded-pill"
+                                  aria-label={`${t("فتح خطة الدرس")} — ${entry.class_name}`}
+                                  to={`/preview/lesson-plan/${entry.next_plan.id}`}>
+                                  {t("فتح خطة الدرس")}
+                                </Link>
+                              ) : (
+                                <Link className="btn btn-sm btn-outline-primary rounded-pill"
+                                  aria-label={`${t("إعداد خطة الدرس")} — ${entry.next_course.title} — ${entry.class_name}`}
+                                  to={`/lesson-plans/new?course=${entry.next_course.id}`}>
+                                  {t("إعداد خطة الدرس")}
+                                </Link>
+                              ))}
+                            </div>
                           </div>
                         )}
                       </div>

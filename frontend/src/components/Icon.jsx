@@ -14,6 +14,7 @@ const PATHS = {
   printer: (<><path d="M7 8V3.8h10V8" /><rect x="4" y="8" width="16" height="8.5" rx="2" /><path d="M7 13.5h10v7H7z" /></>),
   palette: (<><path d="M12 21a9 9 0 1 1 9-9c0 2-1.6 3-3.2 3H15a2.3 2.3 0 0 0-1.7 4c.4.5.3 2-1.3 2Z" /><circle cx="7.5" cy="11" r="1" fill="currentColor" /><circle cx="11" cy="7.5" r="1" fill="currentColor" /><circle cx="15.5" cy="9" r="1" fill="currentColor" /></>),
   plus: (<path d="M12 5v14M5 12h14" />),
+  logout: (<><path d="M10 17l5-5-5-5M15 12H3" /><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" /></>),
   download: (<><path d="M12 4v10.5M7.5 10.8 12 15.3l4.5-4.5M4.5 19.5h15" /></>),
   upload: (<><path d="M12 14.5V4M7.5 8.2 12 3.7l4.5 4.5M4.5 19.5h15" /></>),
   file: (<><path d="M6 3.5h8L19 8.5v12H6z" /><path d="M13.5 3.5v5.5H19" /></>),
