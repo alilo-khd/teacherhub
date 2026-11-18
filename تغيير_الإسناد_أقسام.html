@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>تغيير الإسناد — TeacherHub</title>
+<style>
+  /* ============================================================
+     TeacherHub — Journal K + Notes (ملاحظات) design system
+     Matches frontend/src/index.css variables
+     ============================================================ */
+  :root {
+    --bg: #f3f5f8;
+    --surface: #ffffff;
+    --ink: #16233c;
+    --ink-2: #3d4c68;
+    --muted: #71809a;
+    --line: #e3e8f0;
+    --line-soft: #edf0f5;
+    --brand: #10233f;
+    --brand-2: #1b3a63;
+    --gold: #c2a059;
+    --gold-2: #e7cf8f;
+    --teal: #177e6c;
+    --teal-soft: #e5f3ef;
+    --amber-soft: #fdf3e0;
+    --red: #c2413a;
+    --radius: 16px;
+    --shadow-sm: 0 1px 2px rgba(16, 35, 63, 0.05), 0 4px 14px rgba(16, 35, 63, 0.05);
+    --shadow-md: 0 2px 4px rgba(16, 35, 63, 0.06), 0 14px 34px rgba(16, 35, 63, 0.1);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: "IBM Plex Sans Arabic", "Segoe UI", Tahoma, sans-serif;
+    direction: rtl;
+    background:
+      radial-gradient(1100px 500px at 85% -5%, rgba(194, 160, 89, 0.09), transparent 60%),
+      radial-gradient(900px 480px at -10% 0%, rgba(23, 126, 108, 0.07), transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    margin: 0;
+    padding: 0;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ====================== A4 print ====================== */
+  @page {
+    size: A4;
+    margin: 16mm;
+    @bottom-center {
+      content: "TeacherHub — صفحة " counter(page) " من " counter(pages);
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      font-size: 9px;
+      color: #6c757d;
+    }
+  }
+
+  .container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 24px 20px;
+  }
+
+  /* ====================== Hero (Journal K style) ====================== */
+  .journal-hero {
+    background: linear-gradient(120deg, #0d1d33 0%, #16324f 55%, #1d4a43 130%);
+    color: #fff;
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 26px;
+    box-shadow: var(--shadow-md);
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+
+  .journal-hero h1 {
+    font-size: 28px;
+    margin: 0 0 10px 0;
+    font-weight: 800;
+    letter-spacing: 0.4px;
+  }
+
+  .journal-hero .subtitle {
+    margin: 0;
+    font-size: 16px;
+    color: #cbd5e1;
+    font-weight: 500;
+  }
+
+  /* ====================== Section header ====================== */
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .section-head .tag {
+    font-size: 13px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 20px;
+    color: #fff;
+  }
+  .tag-before { background: var(--red); }
+  .tag-now   { background: var(--teal); }
+
+  /* ====================== Cards ====================== */
+  .grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-bottom: 26px;
+  }
+  .card {
+    flex: 1 1 370px;
+    background: var(--surface);
+    border: 1px solid var(--line) !important;
+    border-radius: var(--radius) !important;
+    box-shadow: var(--shadow-sm) !important;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .card-body {
+    padding: 22px 24px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .card-title {
+    font-size: 18px;
+    font-weight: 800;
+    margin: 0 0 10px 0;
+    color: var(--ink);
+  }
+  .card-meta {
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  /* ====================== Notes-style entry list (ملاحظات) ====================== */
+  .entry-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .entry-item {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 14px 16px;
+    background: #f8fafc;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .entry-badge {
+    flex-shrink: 0;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 12px;
+    border-radius: 20px;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .entry-badge.before { background: var(--red); }
+  .entry-badge.now    { background: var(--teal); }
+  .entry-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .entry-title {
+    font-weight: 800;
+    color: var(--ink);
+    margin: 0 0 6px 0;
+    font-size: 15px;
+  }
+  .entry-desc {
+    font-size: 13px;
+    color: var(--muted);
+    margin: 0 0 8px 0;
+  }
+  .entry-chips {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .chip {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    background: var(--line-soft);
+    color: var(--ink-2);
+    border: 1px solid var(--line);
+  }
+  .entry-date {
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+
+  /* ====================== Stylus writing area (paper-like) ====================== */
+  .paper-wrap {
+    position: relative;
+    border: 2px dashed var(--line);
+    border-radius: 14px;
+    background: #fff;
+    min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    box-shadow: inset 0 2px 6px rgba(16,35,63,0.04);
+    margin-bottom: 14px;
+  }
+  canvas#writeCanvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    cursor: crosshair;
+    border-radius: 12px;
+    box-shadow: 0 6px 18px rgba(16,35,63,0.10);
+  }
+  .write-empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 46px 16px;
+  }
+  .write-empty svg {
+    width: 56px;
+    height: 56px;
+    margin-bottom: 14px;
+    color: #94a3b8;
+  }
+  .write-empty p {
+    margin: 0;
+    font-size: 15px;
+  }
+  .write-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: center;
+    margin-bottom: 14px;
+  }
+  .write-btn {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: var(--ink-2);
+    padding: 8px 16px;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.16s ease;
+  }
+  .write-btn:hover {
+    background: var(--line-soft);
+    border-color: var(--brand-2);
+    color: var(--brand-2);
+  }
+  .write-btn.active {
+    background: var(--brand-2);
+    color: #fff;
+    border-color: var(--brand-2);
+  }
+  .write-btn-danger {
+    background: #fee2e2;
+    color: var(--red);
+    border-color: #fecaca;
+  }
+  .write-btn-danger:hover {
+    background: var(--red);
+    color: #fff;
+  }
+  .write-hint {
+    font-size: 12.5px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: 6px;
+  }
+
+  /* ====================== Empty states ====================== */
+  .empty-state {
+    text-align: center;
+    color: var(--muted);
+    padding: 34px 20px;
+    font-style: italic;
+    background: #f8fafc;
+    border-radius: 10px;
+    border: 1px dashed var(--line);
+  }
+
+  /* ====================== Footer ====================== */
+  .footer {
+    margin-top: 32px;
+    text-align: center;
+    font-size: 11px;
+    color: #94a3b8;
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+    letter-spacing: 0.4px;
+  }
+
+  /* ====================== Print ====================== */
+  @media print {
+    body { background: #ffffff; -webkit-print-color-adjust: exact; }
+    .container { padding: 0; }
+    .card { break-inside: avoid; box-shadow: none; border: 1px solid #cbd5e1; }
+    .journal-hero { box-shadow: none; border: 1px solid #cbd5e1; }
+    .paper-wrap { border: 1px solid var(--line); break-inside: avoid; }
+    .write-controls { display: none !important; }
+    .write-empty { background: #ffffff; border: none; }
+    .footer { border-top: 1px solid #cbd5e1; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Hero — Journal K style -->
+  <div class="journal-hero">
+    <h1>تغيير الإسناد</h1>
+    <p class="subtitle">أقسام كانت تخصني سابقاً، وأقسام تخصني الآن</p>
+  </div>
+
+  <div class="grid">
+    <!-- Card 1: Sections that belonged to me before -->
+    <div class="card">
+      <div class="card-body">
+        <div class="section-head">
+          <span class="tag tag-before">الأقسام السابقة</span>
+        </div>
+        <h2 class="card-title">أقسام كانت تخصني سابقاً</h2>
+        <p class="card-meta">سجل الأقسام التي كانت تحت إسنادك قبل عملية النقل</p>
+        <ul class="entry-list">
+          <!-- populated from /api/classes/ -->
+        </ul>
+        <div class="empty-state">
+          لا توجد أقسام تم نقل ملكيتها.<br>
+          لم يتم تسجيل أي نقل ملكية لأقسام كانت تخصك مسبقاً.
+        </div>
+      </div>
+    </div>
+
+    <!-- Card 2: Sections that belong to me now (with stylus writing) -->
+    <div class="card">
+      <div class="card-body">
+        <div class="section-head">
+          <span class="tag tag-now">الأقسام الحالية</span>
+        </div>
+        <h2 class="card-title">أقسام تخصني الآن</h2>
+        <p class="card-meta">الأقسام المسجلة باسمك حالياً والمعتمدة للإسناد — مساحة للكتابة اليدوية بالقلم (Stylus)</p>
+        <ul class="entry-list">
+          <!-- populated from /api/classes/ -->
+        </ul>
+        <div class="empty-state" style="margin-bottom: 16px;">
+          ابدأ بإضافة قسم جديد ليظهر هنا.
+        </div>
+
+        <!-- Stylus writing area — Notes (ملاحظات) style -->
+        <h3 style="font-size:15px; font-weight:800; margin:0 0 8px 0; color:var(--ink);">ملاحظات الإسناد (اكتب بالقلم)</h3>
+        <div class="paper-wrap">
+          <canvas id="writeCanvas" width="900" height="420"></canvas>
+          <div class="write-empty" id="writeEmpty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 21l-7-7 7-7"/><path d="M22 12c0 4.714-3.482 8.583-7.934 9.067a5.01 5.01 0 01-4.133 0C9.482 20.583 6 16.714 6 12c0-2.09 1.062-3.96 2.72-5.198a2.39 2.39 0 011.648-.807c1.039 0 1.923.64 2.298 1.597C14.29 7.48 17 10.19 17 12c0 1.292-.236 2.537-.68 3.695a5.01 5.01 0 01-4.133 0C10.482 15.583 7 11.714 7 7c0-2.09 1.062-3.96 2.72-5.198a2.39 2.39 0 011.648-.807c1.039 0 1.923.64 2.298 1.597C13.29 2.48 16 4.19 16 7c0 2.866-2.482 5.583-5.934 6.067a5.01 5.01 0 01-4.133 0C6.482 10.583 3 8.714 3 7c0-2.09 1.062-3.96 2.72-5.198a2.39 2.39 0 011.648-.807c1.039 0 1.923.64 2.298 1.597C11.29 2.48 14 4.19 14 7c0 2.09-1.062 3.96-2.72 5.198a2.39 2.39 0 00-1.648.807c-1.039 0-1.923-.64-2.298-1.597C9.71 8.48 7 5.19 7 3c0-2.866 2.482-5.583 5.934-6.067a5.01 5.01 0 014.133 0C15.482 3.417 17 5.286 17 7c0 2.09-1.062 3.96-2.72 5.198a2.39 2.39 0 00-1.648.807c-1.039 0-1.923.64-2.298-1.597C10.71 10.48 8 12.19 8 12c0 4.714 3.482 8.583 7.934 9.067a5.01 5.01 0 004.133 0C18.518 20.583 22 16.714 22 12c0-2.09-1.062-3.96-2.72-5.198a2.39 2.39 0 00-1.648-.807c-1.039 0-1.923.64-2.298 1.597C12.71 10.48 10 12.19 10 12c0 2.09-1.062 3.96-2.72 5.198a2.39 2.39 0 001.648.807c1.039 0 1.923-.64 2.298-1.597C14.71 10.48 12 12.19 12 12z"/>
+            </svg>
+            <p>اكتب هنا بالقلم (Stylus) أو الماوس — مساحة للكتابة اليدوية لتسجيل ملاحظات الإسناد</p>
+          </div>
+        </div>
+
+        <div class="write-controls">
+          <button class="write-btn active" onclick="setPenColor('#10233f', this)">أسود</button>
+          <button class="write-btn" onclick="setPenColor('#c2413a', this)">أحمر</button>
+          <button class="write-btn" onclick="setPenColor('#177e6c', this)">أخضر</button>
+          <button class="write-btn" onclick="setPenColor('#1b3a63', this)">أزرق</button>
+          <button class="write-btn" onclick="setPenColor('#c2a059', this)">ذهبي</button>
+          <button class="write-btn write-btn-danger" onclick="clearCanvas()">مسح الكل</button>
+        </div>
+        <div class="write-hint">استخدم القلم الرقمي (Stylus) أو إصبعك للكتابة على الورقة أعلاه — وليس في محرر PDF</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    TeacherHub — مساحة التدريس · تغيير الإسناد (أقسام) · بتصميم دفتر اليومي وصفحة الملاحظات · writable with stylus
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('writeCanvas');
+  const ctx = canvas.getContext('2d');
+  const empty = document.getElementById('writeEmpty');
+
+  let drawing = false;
+  let lastX = 0;
+  let lastY = 0;
+  let penColor = '#10233f';
+  let penWidth = 3.5;
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+    }
+    ctx.lineWidth = penWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = penColor;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  function getPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const x = (e.clientX - rect.left) * dpr;
+    const y = (e.clientY - rect.top) * dpr;
+    return { x, y };
+  }
+
+  function startDrawing(e) {
+    drawing = true;
+    empty.style.display = 'none';
+    const p = getPos(e);
+    lastX = p.x;
+    lastY = p.y;
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+  }
+
+  function draw(e) {
+    if (!drawing) return;
+    const p = getPos(e);
+    ctx.beginPath();
+    ctx.moveTo(lastX, lastY);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+    lastX = p.x;
+    lastY = p.y;
+  }
+
+  function stopDrawing() { drawing = false; }
+
+  /* Mouse */
+  canvas.addEventListener('mousedown', startDrawing);
+  canvas.addEventListener('mousemove', draw);
+  canvas.addEventListener('mouseup', stopDrawing);
+  canvas.addEventListener('mouseout', stopDrawing);
+
+  /* Touch / stylus */
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    startDrawing(e.touches[0]);
+  }, { passive: false });
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    draw(e.touches[0]);
+  }, { passive: false });
+  canvas.addEventListener('touchend', stopDrawing);
+
+  window.setPenColor = function(color, btn) {
+    penColor = color;
+    ctx.strokeStyle = color;
+    document.querySelectorAll('.write-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+  };
+
+  window.clearCanvas = function() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    empty.style.display = 'block';
+  };
+</script>
+</body>
+</html>
