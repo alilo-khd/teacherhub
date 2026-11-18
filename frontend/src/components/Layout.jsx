@@ -78,6 +78,7 @@ const TOOL_GROUPS = [
       { to: "/security-center", label: "مركز الأمان", icon: "bell" },
       { to: "/parent-portal", label: "بوابة أولياء الأمور", icon: "users" },
       { to: "/student-portal", label: "بوابة التلميذ", icon: "user" },
+      { to: "/class-reassignment", label: "تغيير الإسناد", icon: "exchange" },
     ],
   },
 ];

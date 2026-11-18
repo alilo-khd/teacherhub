@@ -24,6 +24,7 @@ const SeatingAssignmentsPage = lazy(() => import("./pages/SeatingAssignments"));
 const SecurityCenterPage = lazy(() => import("./pages/SecurityCenter"));
 const ParentPortalPage = lazy(() => import("./pages/ParentPortal"));
 const StudentPortalPage = lazy(() => import("./pages/StudentPortal"));
+const ClassReassignmentPage = lazy(() => import("./pages/ClassReassignment"));
 const ThemesPage = lazy(() => import("./pages/Themes"));
 const JournalsPage = lazy(() => import("./pages/Resources").then((m) => ({ default: m.JournalsPage })));
 const LessonPlansPage = lazy(() => import("./pages/Resources").then((m) => ({ default: m.LessonPlansPage })));
@@ -102,6 +103,7 @@ async function startApp() {
                     <Route path="/security-center" element={<SecurityCenterPage />} />
                     <Route path="/parent-portal" element={<ParentPortalPage />} />
                     <Route path="/student-portal" element={<StudentPortalPage />} />
+                    <Route path="/class-reassignment" element={<ClassReassignmentPage />} />
                     <Route path="/sessions" element={<SessionsPage />} />
                     <Route path="/classes" element={<ClassesPage />} />
                     <Route path="/students" element={<StudentsPage />} />
