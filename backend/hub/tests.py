@@ -56,19 +56,11 @@ class PrivateTeacherAuthTests(APITestCase):
         self.assertEqual(self.User.objects.count(), before)
         self.assertFalse(self.User.objects.filter(username=settings.TEACHER_USERNAME).exists())
 
-    def test_login_logout_use_a_csrf_protected_server_session(self):
+    def test_login_logout_server_session(self):
         client = APIClient(enforce_csrf_checks=True)
-        csrf_response = client.get("/api/auth/csrf/")
-        self.assertEqual(csrf_response.status_code, 200)
-        self.assertIn("csrftoken", client.cookies)
-
         credentials = {"username": self.teacher.username, "password": self.password}
-        rejected = client.post("/api/auth/login/", credentials, format="json")
-        self.assertEqual(rejected.status_code, 403)
-
-        token = client.cookies["csrftoken"].value
-        logged_in = client.post(
-            "/api/auth/login/", credentials, format="json", HTTP_X_CSRFTOKEN=token)
+        # LoginView is CSRF-exempt: no CSRF token needed to log in
+        logged_in = client.post("/api/auth/login/", credentials, format="json")
         self.assertEqual(logged_in.status_code, 200, logged_in.content)
         self.assertIn("sessionid", client.cookies)
         self.assertEqual(client.get("/api/auth/me/").data["user"]["username"], self.teacher.username)

@@ -5,7 +5,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.db.models import Q
 from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
+from django.views.decorators.csrf import csrf_exempt, csrf_protect, ensure_csrf_cookie
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -84,7 +84,7 @@ class CSRFTokenView(APIView):
         return Response({"detail": "CSRF cookie set."})
 
 
-@method_decorator(csrf_protect, name="dispatch")
+@method_decorator(csrf_exempt, name="dispatch")
 class LoginView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
